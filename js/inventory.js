@@ -126,6 +126,7 @@ function openInvItemModal(existing) {
 }
 async function saveInvItem(existing) {
   if (!guardWrite()) return;
+  if (!guardOnline()) return;
   if (!busyStart()) return;
   const btn = document.getElementById('saveInvBtn');
   if (btn) btn.disabled = true;
@@ -279,6 +280,7 @@ function computeStockUpdate(prevStock, type, qtyRaw, costPerUnit) {
 }
 async function saveInvTx(forcedType) {
   if (!guardWrite()) return;
+  if (!guardOnline()) return;
   if (!busyStart()) return;
   const btn = document.getElementById('saveTxBtn');
   if (btn) btn.disabled = true;
