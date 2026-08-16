@@ -1,7 +1,6 @@
 // ============================================================
 // UI HELPERS — formatting, modal, toast, shared render utils
 // ============================================================
-const _fmtCache = new Map();
 const PH_TZ = 'Asia/Manila';
 
 // Currency-safe rounding: avoids 999.999999 style floats
