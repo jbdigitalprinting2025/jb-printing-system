@@ -34,10 +34,13 @@ service cloud.firestore {
       return signedIn() && (getRole() == 'staff' || getRole() == 'admin');
     }
     // Active = signed in AND the account was not removed by an admin.
-    // A removed user can read their own users doc (to show the disabled
-    // message) but nothing else.
+    // NOTE: missing-field access is an ERROR in rules, so 'removed' must be
+    // guarded with `in` — docs created before this feature have no removed key
+    // and are active by default.
     function isActiveUser() {
-      return signedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.removed != true;
+      return signedIn()
+        && (!('removed' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data)
+            || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.removed != true);
     }
     function isActiveStaffOrAdmin() {
       return isActiveUser() && (getRole() == 'staff' || getRole() == 'admin');
@@ -116,17 +119,25 @@ service cloud.firestore {
     // payment.amount <= project.contractPrice - project.amountPaid (pre-batch)
     // AND the project's amountPaid must increase by exactly this amount in the
     // same batch (so payments collection stays the source of truth and a rogue
-    // write cannot bypass the balance). ----
+    // write cannot bypass the balance). Missing fields are guarded with `in`
+    // (legacy projects may lack amountPaid until the next admin login
+    // normalizes them). ----
     match /payments/{id} {
       allow read: if isActiveUser();
       allow create: if isActiveStaffOrAdmin()
         && request.resource.data.amount > 0
         && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
         && request.resource.data.amount
-           <= (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.contractPrice || 0)
-              - (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid || 0)
+           <= ('contractPrice' in get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data
+               ? get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.contractPrice
+               : 0)
+              - ('amountPaid' in get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data
+                 ? get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
+                 : 0)
         && getAfter(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
-           == (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid || 0)
+           == ('amountPaid' in get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data
+               ? get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
+               : 0)
               + request.resource.data.amount;
       // Edit: amount <= remaining AFTER removing the old amount; amountPaid must
       // move by (new - old) in the same batch.
@@ -134,14 +145,22 @@ service cloud.firestore {
         && request.resource.data.amount > 0
         && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
         && request.resource.data.amount
-           <= (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.contractPrice || 0)
-              - ((get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid || 0) - (resource.data.amount || 0))
+           <= ('contractPrice' in get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data
+               ? get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.contractPrice
+               : 0)
+              - (('amountPaid' in get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data
+                  ? get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
+                  : 0) - (resource.data.amount || 0))
         && getAfter(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
-           == (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid || 0)
+           == ('amountPaid' in get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data
+               ? get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
+               : 0)
               - (resource.data.amount || 0) + request.resource.data.amount;
       allow delete: if isActiveStaffOrAdmin()
         && getAfter(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
-           == (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid || 0)
+           == ('amountPaid' in get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data
+               ? get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
+               : 0)
               - (resource.data.amount || 0);
     }
 
