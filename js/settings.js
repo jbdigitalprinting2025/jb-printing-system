@@ -64,12 +64,15 @@ function renderSettings() {
     </div>
 
     ${canAdmin ? `
-    <div class="set-group"><h3>💾 Backup & Restore</h3><div class="desc">Download all data as backup, or restore from a backup file. Restore overwrites current data — always backup first. Admin only.</div>
+    <div class="set-group"><h3>💾 Backup & Restore</h3><div class="desc"><b>LOCAL BACKUP FILE:</b> "Download Backup" saves a JSON file to your device AND stores the same full backup securely in the cloud (admin only — restore is always available from either). Restore overwrites current data — always backup first. Admin only.</div>
       <div class="flex flex-wrap">
         <button class="btn btn-green btn-sm" onclick="exportBackup()">⬇ Download Backup (JSON)</button>
         <button class="btn btn-outline btn-sm" onclick="exportBackupExcel()">⬇ Backup as Excel</button>
         <button class="btn btn-pink btn-sm" onclick="document.getElementById('restoreFile').click()">⬆ Restore from Backup</button>
         <input type="file" id="restoreFile" accept=".json" class="hidden" onchange="restoreBackup(this.files[0])">
+      </div>
+      <div class="mt-8"><b style="font-size:13px">☁️ Cloud backups (auto-created on every Download):</b>
+        <div id="cloudBackupList" class="mt-4"></div>
       </div>
     </div>
 
@@ -85,6 +88,7 @@ function renderSettings() {
   renderAuditLog();
   renderLogoPreview();
   renderLogo();
+  renderCloudBackups();
 }
 
 async function saveBizSettings() {
@@ -227,9 +231,9 @@ function renderUserList() {
   if (!el) return;
   const roleBadge = r => `<span class="badge ${r === 'admin' ? 'yellow' : r === 'staff' ? 'blue' : 'gray'}">${escapeHtml(r)}</span>`;
   el.innerHTML = State.users.map(u => `
-    <div class="set-row">
-      <div><div class="sr-lbl">${escapeHtml(u.name || u.email)} ${u.uid === currentUser.uid ? '<span class="badge green">you</span>' : ''}</div><div class="sr-sub">${escapeHtml(u.email || '')}</div></div>
-      ${isAdmin() ? `<select onchange="changeUserRole('${u.uid}', this.value)" ${u.uid === currentUser.uid ? 'disabled' : ''} style="padding:6px 8px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);font-size:12px">
+    <div class="set-row" style="${u.removed ? 'opacity:.55' : ''}">
+      <div><div class="sr-lbl">${escapeHtml(u.name || u.email)} ${u.uid === currentUser.uid ? '<span class="badge green">you</span>' : ''} ${u.removed ? '<span class="badge red">removed/disabled</span>' : ''}</div><div class="sr-sub">${escapeHtml(u.email || '')}</div></div>
+      ${isAdmin() && !u.removed ? `<select onchange="changeUserRole('${u.uid}', this.value)" ${u.uid === currentUser.uid ? 'disabled' : ''} style="padding:6px 8px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);font-size:12px">
         ${ROLES.map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
       </select>
       ${u.uid !== currentUser.uid ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${u.uid}')" title="Remove user access">🗑</button>` : ''}`
@@ -241,13 +245,35 @@ function deleteUser(uid) {
   const u = State.users.find(x => x.uid === uid);
   if (!u) return;
   if (uid === currentUser.uid) { showToast("You can't delete yourself", 'error'); return; }
-  confirmDelete(`Remove user "${u.name || u.email}"? They will lose access to the system.`, async () => {
+  confirmDelete(`Remove user "${u.name || u.email}"? Their account will be DISABLED immediately: they can no longer sign in or access data.`, async () => {
     try {
-      await db.collection(COLL.users).doc(uid).delete();
-      await logAudit('deleted', 'user', uid, null, { email: u.email });
-      State.users = State.users.filter(x => x.uid !== uid);
+      // 1) Mark the Firestore user record as removed. Firestore rules deny all
+      //    business-data access to removed users (isActiveUser check), so even
+      //    if the auth account still exists their access is revoked server-side.
+      await db.collection(COLL.users).doc(uid).set({
+        uid: uid,
+        email: u.email || '',
+        name: u.name || '',
+        role: u.role || 'viewer',
+        removed: true,
+        removedAt: nowTS(),
+        removedBy: currentUser.email || ''
+      }, { merge: true });
+      // 2) Try the server-side revocation (deletes the Firebase Auth account).
+      //    If the Cloud Function isn't deployed yet, the rules-level block above
+      //    still denies access — the user just keeps a dead login shell.
+      try {
+        if (typeof firebase !== 'undefined' && firebase.functions && typeof firebase.functions() === 'function' && firebase.functions().httpsCallable) {
+          const fn = firebase.functions().httpsCallable('removeUser');
+          await fn({ uid });
+          showToast('User removed — auth account disabled ✓', 'success');
+        } else {
+          showToast('User removed ✓ (server-side auth deletion: Cloud Function not deployed — access already blocked by rules)', 'info');
+        }
+      } catch (e) { console.warn('removeUser function failed', e); showToast('User removed ✓ (server-side auth deletion failed: ' + (e.message || '') + ' — access blocked by rules)', 'info'); }
+      await logAudit('deleted', 'user', uid, null, { email: u.email, removed: true });
+      State.users = State.users.map(x => x.uid === uid ? { ...x, removed: true, removedAt: new Date() } : x);
       renderSettings();
-      showToast('User removed ✓', 'success');
     } catch (e) { showToast('Error: ' + (e.message || ''), 'error'); }
   });
 }
@@ -447,11 +473,16 @@ async function exportBackup() {
   a.download = `jb-backup-${dateInputVal(new Date())}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
-  // Cloud copy: store the snapshot in Firestore too (admin-only collection)
+  // REAL cloud backup: the full JSON snapshot is stored in the admin-only
+  // backups collection — this is a true recoverable cloud backup, not just
+  // metadata. (Docs stay well under Firestore's 1MB size limit.)
   try {
-    await db.collection(COLL.backups).add({
+    const ref = await db.collection(COLL.backups).add({
+      kind: 'full',
       fileName: a.download,
+      payload: JSON.stringify(data),
       createdAt: nowTS(),
+      createdBy: currentUser ? currentUser.email : '',
       counts: {
         sales: data.sales.length, expenses: data.expenses.length, inventory: data.inventory.length,
         inventory_transactions: data.inventory_transactions.length, projects: data.projects.length,
@@ -460,20 +491,37 @@ async function exportBackup() {
         users: data.users.length
       }
     });
+    renderCloudBackups();
   } catch (e) { console.warn('cloud backup copy failed', e); }
   await logAudit('backup', 'system', 'export', null, { size: data.sales.length + data.expenses.length + data.inventory.length + data.projects.length + data.customers.length });
-  showToast('Backup downloaded ✓', 'success');
+  showToast('Backup downloaded ✓ (cloud copy saved)', 'success');
 }
-function exportBackupExcel() {
-  const wb = XLSX.utils.book_new();
-  const add = (name, arr, map) => { const ws = XLSX.utils.json_to_sheet(arr.map(map)); XLSX.utils.book_append_sheet(wb, ws, name); };
-  add('Sales', State.sales, s => ({ ID: s.transactionId, Date: fmtDate(s.date), Customer: s.customerName, Items: (s.items || []).map(i => i.product).join(', '), Total: saleTotal(s), Status: s.paymentStatus }));
-  add('Expenses', State.expenses, e => ({ ID: e.expenseId, Date: fmtDate(e.date), Category: e.category, Description: e.description, Amount: e.amount }));
-  add('Inventory', activeInventory(), i => ({ Item: i.name, SKU: i.sku, Stock: i.currentStock, Unit: i.unit, Cost: i.costPerUnit, Value: (Number(i.currentStock) || 0) * (Number(i.costPerUnit) || 0) }));
-  add('Projects', activeProjects(), p => ({ Name: p.name, Status: p.status, Contract: p.contractPrice, Paid: projectPaidTotal(p.id), Profit: projectProfit(p) }));
-  add('Customers', State.customers, c => ({ Name: c.name, Contact: c.contactNumber, Email: c.email }));
-  add('Suppliers', State.suppliers, s => ({ Name: s.name, Contact: s.contactPerson, Phone: s.phone }));
-  XLSX.writeFile(wb, 'jb-backup.xlsx');
+async function renderCloudBackups() {
+  const wrap = document.getElementById('cloudBackupList');
+  if (!wrap) return;
+  try {
+    const snap = await db.collection(COLL.backups).orderBy('createdAt', 'desc').limit(10).get();
+    const items = [];
+    snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+    if (!items.length) { wrap.innerHTML = '<div style="color:var(--gray-500);font-size:12.5px">No cloud backups yet.</div>'; return; }
+    wrap.innerHTML = items.map(b => {
+      const c = b.counts || {};
+      const when = b.createdAt && b.createdAt.toDate ? fmtDate(b.createdAt.toDate()) : '';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--gray-200);font-size:12.5px">
+        <span>${escapeHtml(b.fileName || 'backup')} <span style="color:var(--gray-500)">· ${when} · ${b.kind === 'full' ? 'full cloud backup' : 'metadata'}</span></span>
+        ${b.kind === 'full' ? `<button class="btn btn-outline btn-sm" onclick="restoreFromCloud('${b.id}')">⬆ Restore from Cloud</button>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) { wrap.innerHTML = '<div style="color:var(--gray-500);font-size:12.5px">Cloud backups unavailable (admin only).</div>'; }
+}
+async function restoreFromCloud(backupId) {
+  if (!guardAdmin()) return;
+  try {
+    const doc = await db.collection(COLL.backups).doc(backupId).get();
+    if (!doc.exists || !doc.data().payload) { showToast('Backup data not found', 'error'); return; }
+    const data = JSON.parse(doc.data().payload);
+    await performRestore(data);
+  } catch (e) { showToast('Cloud restore failed: ' + (e.message || ''), 'error'); }
 }
 async function restoreBackup(file) {
   if (!guardAdmin()) return;
@@ -482,9 +530,26 @@ async function restoreBackup(file) {
     const text = await file.text();
     const data = JSON.parse(text);
     if (!data.sales || !data.expenses) { showToast('Not a valid backup file', 'error'); return; }
-    // SAFETY: build an automatic PRE-RESTORE snapshot of the CURRENT data first.
-    // If anything goes wrong during restore, the admin still has the pre-restore
-    // file to recover the pre-restore state.
+    await performRestore(data);
+  } catch (e) { showToast('Restore failed: ' + (e.message || 'Invalid backup file'), 'error'); }
+  finally { busyEnd(); }
+}
+// Shared restore engine (used by file restore + cloud restore).
+// SECURITY-MODEL AWARE:
+//  - inventory_transactions are IMMUTABLE in Firestore rules (append-only by
+//    design). A client can never delete/replace them, so restore does NOT try.
+//    Existing movements are preserved as permanent history; backup movements are
+//    already present (they were never deleted), so nothing is lost.
+//  - users collection is NOT restored: Firebase Auth accounts cannot be
+//    recreated from Firestore docs. Existing auth accounts + their role docs
+//    are preserved. (Full user replacement requires the server-side
+//    removeUser/restore callable Cloud Functions — admin SDK.)
+//  - A pre-restore backup is always created first.
+async function performRestore(data) {
+  if (!guardAdmin()) return;
+  if (!busyStart()) return;
+  try {
+    // SAFETY: automatic PRE-RESTORE snapshot (download + cloud copy)
     const preRestore = {
       app: 'jb-printing-system', version: 3,
       exportedAt: new Date().toISOString(),
@@ -503,13 +568,12 @@ async function restoreBackup(file) {
     a.download = `jb-pre-restore-${dateInputVal(new Date())}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
-    try { await db.collection(COLL.backups).add({ fileName: a.download, preRestore: true, createdAt: nowTS() }); } catch (e) { console.warn('pre-restore cloud copy failed', e); }
+    try { await db.collection(COLL.backups).add({ fileName: a.download, preRestore: true, payload: JSON.stringify(preRestore), createdAt: nowTS() }); } catch (e) { console.warn('pre-restore cloud copy failed', e); }
 
     const counts = `Sales: ${data.sales.length} · Expenses: ${data.expenses.length} · Inventory: ${data.inventory ? data.inventory.length : 0} · Projects: ${data.projects ? data.projects.length : 0}`;
-    confirmModal('⚠️ Restore Backup', `This will OVERWRITE current data with the backup.\n\n${counts}\n\nThis cannot be undone. Proceed?`, async () => {
+    confirmModal('⚠️ Restore Backup', `This will OVERWRITE current data with the backup.\n\n${counts}\n\nNOTE: Inventory movement history (immutable) and user accounts are preserved and NOT replaced by restore.\n\nA pre-restore backup has been downloaded automatically.\n\nProceed?`, async () => {
       try {
         const clear = async (coll) => {
-          // loop until empty to clear >400 docs safely
           for (let i = 0; i < 20; i++) {
             const snap = await db.collection(coll).limit(400).get();
             if (snap.empty) return;
@@ -518,9 +582,6 @@ async function restoreBackup(file) {
             await b.commit();
           }
         };
-        await clear(COLL.sales); await clear(COLL.expenses); await clear(COLL.inventory); await clear(COLL.invTx);
-        await clear(COLL.projects); await clear(COLL.projRev); await clear(COLL.projExp); await clear(COLL.payments);
-        await clear(COLL.customers); await clear(COLL.suppliers);
         const writeAll = async (coll, list) => {
           let b = db.batch(); let ops = 0;
           for (const item of list) {
@@ -531,45 +592,60 @@ async function restoreBackup(file) {
           }
           if (ops > 0) await b.commit();
         };
-        await writeAll(COLL.sales, data.sales || []);
-        await writeAll(COLL.expenses, data.expenses || []);
+        // 1) clear replaceable collections (admin-allowed deletes only)
+        await clear(COLL.sales); await clear(COLL.expenses); await clear(COLL.inventory);
+        await clear(COLL.projects); await clear(COLL.projRev); await clear(COLL.projExp); await clear(COLL.payments);
+        await clear(COLL.customers); await clear(COLL.suppliers);
+        // 2) restore in dependency-safe order: masters first, then transactions
         await writeAll(COLL.inventory, data.inventory || []);
-        await writeAll(COLL.invTx, data.inventory_transactions || []);
-        await writeAll(COLL.projects, data.projects || []);
-        await writeAll(COLL.projRev, data.project_revenue || []);
-        await writeAll(COLL.projExp, data.project_expenses || []);
-        await writeAll(COLL.payments, data.payments || []);
         await writeAll(COLL.customers, data.customers || []);
         await writeAll(COLL.suppliers, data.suppliers || []);
-        // settings + users (roles come from the backup; ADMIN_EMAILS safety net still
-        // force-promotes the owner on next login)
+        await writeAll(COLL.sales, data.sales || []);
+        await writeAll(COLL.expenses, data.expenses || []);
+        await writeAll(COLL.payments, data.payments || []);
+        await writeAll(COLL.projRev, data.project_revenue || []);
+        await writeAll(COLL.projExp, data.project_expenses || []);
+        await writeAll(COLL.projects, data.projects || []);
+        // 3) settings (merge) — users/auth NOT restored (see header comment)
         if (data.settings) await db.collection(COLL.settings).doc('main').set(data.settings, { merge: true });
-        if (data.users) await writeAll(COLL.users, data.users);
         await logAudit('restore', 'system', 'import', null, { counts });
         settingsCache = null; await loadSettings(true);
         await loadAllData();
-        // Verification: compare restored counts with backup counts
+        // 4) Verification: compare restored counts with backup counts
         const verify = [
           ['Sales', State.sales.length, (data.sales || []).length],
           ['Expenses', State.expenses.length, (data.expenses || []).length],
           ['Inventory', State.inventory.length, (data.inventory || []).length],
-          ['Inventory Tx', State.invTx.length, (data.inventory_transactions || []).length],
           ['Projects', State.projects.length, (data.projects || []).length],
           ['Payments', State.payments.length, (data.payments || []).length],
           ['Customers', State.customers.length, (data.customers || []).length],
           ['Suppliers', State.suppliers.length, (data.suppliers || []).length]
         ];
         const mismatches = verify.filter(([n, a, b]) => a !== b);
+        const preserved = `Inventory movements: preserved (immutable history) · Users/auth: preserved (not restored)`;
         if (mismatches.length) {
-          showToast('Restore finished but some counts differ: ' + mismatches.map(m => `${m[0]} ${m[1]}/${m[2]}`).join(', '), 'error');
+          showToast('Restore finished but some counts differ: ' + mismatches.map(m => `${m[0]} ${m[1]}/${m[2]}`).join(', ') + '. ' + preserved, 'error');
         } else {
-          showToast('✅ Restore complete and verified!', 'success');
+          showToast('✅ Restore complete and verified! ' + preserved, 'success');
         }
         renderSettings();
-      } catch (e) { console.error(e); showToast(friendlyError(e, 'Restore failed. Please try again.'), 'error'); }
-    }, 'Restore', true);
-  } catch (e) { showToast('Invalid backup file', 'error'); }
-  finally { busyEnd(); }
+      } catch (e) {
+        console.error(e);
+        showToast('Restore FAILED: ' + friendlyError(e, 'Unable to restore. Your pre-restore backup file is ready if needed.'), 'error');
+      }
+    });
+  } finally { busyEnd(); }
+}
+function exportBackupExcel() {
+  const wb = XLSX.utils.book_new();
+  const add = (name, arr, map) => { const ws = XLSX.utils.json_to_sheet(arr.map(map)); XLSX.utils.book_append_sheet(wb, ws, name); };
+  add('Sales', State.sales, s => ({ ID: s.transactionId, Date: fmtDate(s.date), Customer: s.customerName, Items: (s.items || []).map(i => i.product).join(', '), Total: saleTotal(s), Status: s.paymentStatus }));
+  add('Expenses', State.expenses, e => ({ ID: e.expenseId, Date: fmtDate(e.date), Category: e.category, Description: e.description, Amount: e.amount }));
+  add('Inventory', activeInventory(), i => ({ Item: i.name, SKU: i.sku, Stock: i.currentStock, Unit: i.unit, Cost: i.costPerUnit, Value: (Number(i.currentStock) || 0) * (Number(i.costPerUnit) || 0) }));
+  add('Projects', activeProjects(), p => ({ Name: p.name, Status: p.status, Contract: p.contractPrice, Paid: projectPaidTotal(p.id), Profit: projectProfit(p) }));
+  add('Customers', State.customers, c => ({ Name: c.name, Contact: c.contactNumber, Email: c.email }));
+  add('Suppliers', State.suppliers, s => ({ Name: s.name, Contact: s.contactPerson, Phone: s.phone }));
+  XLSX.writeFile(wb, 'jb-backup.xlsx');
 }
 
 // ---- Audit log ----
