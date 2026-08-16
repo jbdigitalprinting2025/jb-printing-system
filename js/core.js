@@ -171,10 +171,24 @@ async function loadAllData() {
     State.users = [];
     State.audit = [];
   }
-  try {
-    await Promise.all(tasks);
-  } catch (e) {
-    // individual fetches swallow their own errors; this catches unexpected failures
+  await Promise.all(tasks);
+  // Payments are the single source of truth for "amount paid". Keep the
+  // project doc's amountPaid derived so the Firestore payment rule can enforce
+  // "payment <= remaining balance" server-side. (No manual editing allowed.)
+  if (currentUserDoc && currentUserDoc.role === 'admin') {
+    try {
+      const batch = db.batch();
+      let n = 0;
+      State.projects.forEach(p => {
+        const paid = projectPaidTotal(p.id);
+        if (Math.abs((Number(p.amountPaid) || 0) - paid) > 0.009) {
+          batch.update(db.collection(COLL.projects).doc(p.id), { amountPaid: round2(paid), updatedAt: nowTS() });
+          p.amountPaid = round2(paid);
+          n++;
+        }
+      });
+      if (n > 0) await batch.commit();
+    } catch (e) { console.warn('amountPaid normalization failed', e); }
   }
   const failed = State._loadErrors || [];
   State._loadErrors = [];
