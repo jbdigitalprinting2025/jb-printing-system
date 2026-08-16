@@ -202,12 +202,20 @@ async function fetchColl(collection, stateKey, limit = 1000) {
 
 // ---- Realtime subscriptions ----
 function setupRealtime() {
-  // Only subscribe to collections the user can see; keep it light
+  // Only subscribe to collections the user can see; keep it light.
+  // NOTE: invTx/payments/projRev/projExp MUST be subscribed too — otherwise
+  // movements/payments created during the session never reach State and P&L,
+  // inventory history, and project cards go stale until a page reload (bug
+  // found during UAT Aug 16 2026).
   const subs = [
     [COLL.sales, 'sales', onSalesChanged],
     [COLL.expenses, 'expenses', onExpensesChanged],
     [COLL.inventory, 'inventory', onInventoryChanged],
+    [COLL.invTx, 'invTx', onInvTxChanged],
     [COLL.projects, 'projects', onProjectsChanged],
+    [COLL.projRev, 'projRev', onProjRevChanged],
+    [COLL.projExp, 'projExp', onProjExpChanged],
+    [COLL.payments, 'payments', onPaymentsChanged],
     [COLL.customers, 'customers', onCustomersChanged],
     [COLL.suppliers, 'suppliers', onSuppliersChanged]
   ];
@@ -224,6 +232,10 @@ function setupRealtime() {
     State.unsubs.push(un);
   });
 }
+function onInvTxChanged() { if (State.currentPage === 'inventory' || State.currentPage === 'pnl' || State.currentPage === 'reports' || State.currentPage === 'dashboard') rerenderCurrent(); }
+function onProjRevChanged() { if (State.currentPage === 'projects' || State.currentPage === 'dashboard' || State.currentPage === 'reports') rerenderCurrent(); }
+function onProjExpChanged() { if (State.currentPage === 'projects' || State.currentPage === 'dashboard' || State.currentPage === 'reports') rerenderCurrent(); }
+function onPaymentsChanged() { if (State.currentPage === 'projects' || State.currentPage === 'dashboard' || State.currentPage === 'reports') rerenderCurrent(); }
 function onSalesChanged() { if (State.currentPage === 'sales' || State.currentPage === 'dashboard' || State.currentPage === 'calendar' || State.currentPage === 'pnl' || State.currentPage === 'reports') rerenderCurrent(); }
 function onExpensesChanged() { if (State.currentPage === 'expenses' || State.currentPage === 'dashboard' || State.currentPage === 'calendar' || State.currentPage === 'pnl' || State.currentPage === 'reports') rerenderCurrent(); }
 function onInventoryChanged() { if (State.currentPage === 'inventory' || State.currentPage === 'dashboard') rerenderCurrent(); }
