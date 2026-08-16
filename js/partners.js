@@ -76,6 +76,7 @@ function openCustomerModal(existing) {
 }
 async function saveCustomer(existing) {
   if (!guardWrite()) return;
+  if (!guardOnline()) return;
   if (!busyStart()) return;
   const btn = document.getElementById('saveCustBtn');
   if (btn) btn.disabled = true;
@@ -227,6 +228,7 @@ function openSupplierModal(existing) {
 }
 async function saveSupplier(existing) {
   if (!guardWrite()) return;
+  if (!guardOnline()) return;
   if (!busyStart()) return;
   const btn = document.getElementById('saveSupBtn');
   if (btn) btn.disabled = true;
