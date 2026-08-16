@@ -42,4 +42,4 @@ const PAYMENT_STATUSES = ['Paid', 'Partial', 'Unpaid'];
 const RETENTION_MODES = ['archive', 'delete', 'disabled'];
 const ROLES = ['admin', 'staff', 'viewer'];
 // Owner emails — always forced to admin role (safety net)
-const ADMIN_EMAILS = ['mr.sebuguero@gmail.com'];
+const ADMIN_EMAILS = ['jbdigital948@gmail.com', 'mr.sebuguero@gmail.com'];
