@@ -96,6 +96,25 @@ function guardAdmin() {
 function nowTS() { return firebase.firestore.FieldValue.serverTimestamp(); }
 function newId() { return db.collection('_ids').doc().id; }
 
+// ---- Offline guard ----
+// With offline persistence enabled, a plain Firestore write gets QUEUED and
+// syncs later — the UI would show "failed" while the write secretly succeeds,
+// and a retry would then DUPLICATE the record on reconnect. So for critical
+// financial writes we check connectivity FIRST and refuse to queue.
+let _online = typeof navigator !== 'undefined' ? navigator.onLine : true;
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('online', () => { _online = true; });
+  window.addEventListener('offline', () => { _online = false; });
+}
+function isOffline() { return _online === false; }
+function guardOnline() {
+  if (isOffline()) {
+    showToast('Network connection unavailable. Transaction not saved — reconnect and try again.', 'error');
+    return false;
+  }
+  return true;
+}
+
 // Guaranteed-unique business transaction IDs.
 // Base = Firestore auto doc id (globally unique, generated client-side without a write).
 // Display ID = prefix + date + short slice of the unique doc id (human-readable, still unique).
@@ -111,44 +130,6 @@ function uniqueBizId(prefix, date, existingIds) {
   let tries = 0;
   while (existingIds && existingIds.includes(id) && tries < 5) { id = genBizId(prefix, date); tries++; }
   return id;
-}
-
-// Firestore doc ref that will hold a new record — returns {ref, id} using a
-// client-generated unique id (no write needed to reserve it).
-function newDocRef(collection) {
-  const ref = db.collection(collection).doc();
-  return { ref, id: ref.id };
-}
-
-async function fsGet(collection, id) {
-  const snap = await db.collection(collection).doc(id).get();
-  return snap.exists ? snap.data() : null;
-}
-
-async function fsSet(collection, id, data, merge = false) {
-  const doc = db.collection(collection).doc(id);
-  if (merge) { await doc.set(data, { merge: true }); }
-  else { await doc.set(data); }
-  return id;
-}
-
-async function fsUpdate(collection, id, data) {
-  await db.collection(collection).doc(id).update(data);
-}
-
-async function fsDelete(collection, id) {
-  await db.collection(collection).doc(id).delete();
-}
-
-// Real-time subscription helper: returns unsubscribe fn
-function onColl(collection, cb, errCb) {
-  return db.collection(collection)
-    .orderBy('createdAt', 'desc')
-    .onSnapshot(snap => {
-      const items = [];
-      snap.forEach(d => items.push({ id: d.id, ...d.data() }));
-      cb(items);
-    }, err => { console.error('snapshot error', collection, err); if (errCb) errCb(err); });
 }
 
 // ---- Audit log ----
