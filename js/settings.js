@@ -34,10 +34,11 @@ function renderSettings() {
       <div class="muted mt-8" style="font-size:11px">Pinakamaganda: square na image (PNG o JPG). Awtomatikong ni-resize sa laki para sa app.</div>
     </div>
 
+    ${canAdmin ? `
     <div class="set-group"><h3>📂 Categories</h3><div class="desc">Used in sales, expenses, and inventory. Add your own.</div>
       <div class="set-row"><span class="sr-lbl">Sales Categories</span><button class="btn btn-outline btn-sm" onclick="editCategories('sales')">✎ Manage</button></div>
       <div class="set-row"><span class="sr-lbl">Expense Categories</span><button class="btn btn-outline btn-sm" onclick="editCategories('expenses')">✎ Manage</button></div>
-    </div>
+    </div>` : ''}
 
     ${canAdmin ? `
     <div class="set-group"><h3>👥 User Management</h3><div class="desc">Roles: <b>Admin</b> (full access) · <b>Staff</b> (daily operations) · <b>Viewer</b> (view only).</div>
@@ -177,7 +178,7 @@ async function removeLogo() {
 
 // ---- Categories editor ----
 async function editCategories(kind) {
-  if (!guardWrite()) return;
+  if (!guardAdmin()) return;
   const cats = await getCategories();
   const list = kind === 'sales' ? cats.sales : cats.expenses;
   openModal(`✎ Manage ${kind === 'sales' ? 'Sales' : 'Expense'} Categories`, `
@@ -208,7 +209,7 @@ function removeCategoryRow(btn) {
   btn.closest('.set-row').remove();
 }
 async function saveCategories(kind) {
-  if (!guardWrite()) return;
+  if (!guardAdmin()) return;
   const rows = [...document.querySelectorAll('#catList .set-row .sr-lbl')].map(el => el.textContent.trim()).filter(Boolean);
   if (!rows.length) { showToast('At least one category required', 'error'); return; }
   const s = settingsCache || {};
