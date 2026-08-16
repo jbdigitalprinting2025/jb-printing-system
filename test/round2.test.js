@@ -148,30 +148,47 @@ t('Estimated vs Actual differ and both shown', () => {
 });
 
 console.log('\n=== FULL WORKFLOW RECONCILIATION (dashboard == reports == P&L) ===');
-t('P&L reconciles: Revenue 8,000; COGS 3,000; Gross 5,000 (62.5%); OpEx 2,000; Net 3,000 (37.5%)', () => {
+t('P&L reconciles: Revenue 28,000 (8k sales + 20k project); COGS 3,000; Gross 25,000 (89.3%); OpEx 2,000; Net 23,000 (82.1%)', () => {
   const { from, to } = buildProjectScenario();
-  const revenue = sandbox.round2(sandbox.sumBy(State.sales, sandbox.saleTotal));
+  // NEW accounting model (Aug 2026): global Revenue = Sales + Project Revenue.
+  const revenue = sandbox.revenueForRange(from, to);
+  const salesOnly = sandbox.round2(sandbox.sumBy(State.sales, sandbox.saleTotal));
+  const projRevOnly = sandbox.projRevForRange(from, to);
   const cogs = sandbox.cogsForRange(from, to);
   const invPurchases = sandbox.invPurchasesForRange(from, to);
   const opEx = sandbox.round2(sandbox.round2(sandbox.sumBy(State.expenses, e => Number(e.amount) || 0)) - invPurchases);
   const grossProfit = sandbox.round2(revenue - cogs);
-  const grossMargin = sandbox.round4((grossProfit / revenue) * 100);
+  const grossMargin1 = +((grossProfit / revenue) * 100).toFixed(1);
   const netProfit = sandbox.round2(grossProfit - opEx);
-  const netMargin = sandbox.round4((netProfit / revenue) * 100);
-  eq(revenue, 8000);
+  const netMargin1 = +((netProfit / revenue) * 100).toFixed(1);
+  eq(salesOnly, 8000, 'sales revenue');
+  eq(projRevOnly, 20000, 'project revenue counted once');
+  eq(revenue, 28000, 'total revenue = sales + project (no double count)');
   eq(cogs, 3000);
-  eq(grossProfit, 5000);
-  eq(grossMargin, 62.5);
+  eq(grossProfit, 25000);
+  eq(grossMargin1, 89.3);
   eq(opEx, 2000);
-  eq(netProfit, 3000);
-  eq(netMargin, 37.5);
+  eq(netProfit, 23000);
+  eq(netMargin1, 82.1);
 });
-t('Dashboard total == detailed sales total (no double count)', () => {
+t('Project revenue NOT double-counted (5,000 + 15,000 payments = 20,000, not 40,000)', () => {
   buildProjectScenario();
-  const dashboardIncome = sandbox.sumBy(State.sales, sandbox.saleTotal);
-  const detailSum = State.sales.reduce((a, s) => a + sandbox.saleTotal(s), 0);
-  eq(dashboardIncome, detailSum);
-  eq(dashboardIncome, 8000);
+  // two payments of 5000 + 15000 -> projRev = 20000 total
+  State.projRev = [
+    { id: 'r1', projectId: 'proj1', amount: 5000, source: 'payment', paymentId: 'p1', date: new Date(2026, 7, 5), archived: false },
+    { id: 'r2', projectId: 'proj1', amount: 15000, source: 'payment', paymentId: 'p2', date: new Date(2026, 7, 10), archived: false }
+  ];
+  const from = new Date(2026, 7, 1), to = new Date(2026, 7, 31, 23, 59, 59);
+  eq(sandbox.projRevForRange(from, to), 20000);
+  eq(sandbox.revenueForRange(from, to), 28000); // 8000 sales + 20000 project
+});
+t('Dashboard income formula == P&L revenue (same helper semantics)', () => {
+  buildProjectScenario();
+  const from = new Date(2026, 7, 1), to = new Date(2026, 7, 31, 23, 59, 59);
+  const pnl = sandbox.revenueForRange(from, to);
+  const projRevInRange = State.projRev.filter(r => { const d = sandbox.tsToDate(r.date || r.createdAt); return !r.archived && d && d.getTime() >= from.getTime() && d.getTime() <= to.getTime(); });
+  const dash = sandbox.round2(sandbox.round2(sandbox.sumBy(State.sales, sandbox.saleTotal)) + sandbox.sumBy(projRevInRange, r => Number(r.amount) || 0));
+  eq(dash, pnl);
 });
 t('Project balance = contract - payments', () => {
   buildProjectScenario();
@@ -214,8 +231,8 @@ t('P&L PDF contains correct NET PROFIT and margins', () => {
   try { sandbox.exportPnLPDF(); } finally { sandbox.document.getElementById = orig; }
   if (!capturedPdf) throw new Error('PDF not generated');
   const all = capturedPdf.texts.join('\n');
-  if (!all.includes('NET PROFIT / LOSS: ₱3,000.00')) throw new Error('missing net profit line: ' + all.split('\n').slice(-8).join(' | '));
-  if (!all.includes('GROSS PROFIT: ₱5,000.00')) throw new Error('missing gross profit line');
+  if (!all.includes('NET PROFIT / LOSS: ₱23,000.00')) throw new Error('missing net profit line: ' + all.split('\n').slice(-8).join(' | '));
+  if (!all.includes('GROSS PROFIT: ₱25,000.00')) throw new Error('missing gross profit line');
   if (capturedPdf.saves[0] !== 'jb-pnl.pdf') throw new Error('wrong filename');
 });
 
@@ -230,14 +247,14 @@ t('Eligibility excludes master data; includes old transactions only', () => {
   vm.runInContext('settingsCache = { retentionEnabled: true, retentionMode: "delete", retentionMonths: 12 }', sandbox);
   const e = sandbox.retentionEligibleCount();
   eq(e.sales, 1, 'old sale eligible');          // only the 2024 sale (2026 sale is current)
-  eq(e.invTx, 1, 'old movement eligible');
   eq(e.projects, 1, 'old completed project eligible');
   // master data (customers/inventory items/users/settings) has NO eligibility keys at all:
   eq('customers' in e, false, 'customers not in eligibility');
   eq('inventory' in e, false, 'inventory items not in eligibility');
+  eq('invTx' in e, false, 'immutable movements excluded (rules deny client archive/delete)');
   eq('users' in e, false, 'users not in eligibility');
   eq('settings' in e, false, 'settings not in eligibility');
-  eq(e.total, 3);
+  eq(e.total, 2);
 });
 t('Running cleanup twice is safe (idempotent)', () => {
   buildProjectScenario();
