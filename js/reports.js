@@ -3,6 +3,31 @@
 // ============================================================
 
 // ==================== PROFIT & LOSS ====================
+// ============================================================
+// ACCOUNTING MODEL (documented — read before changing numbers)
+// ============================================================
+// 1) REVENUE        = recorded sales (completed/recognized) in period.
+// 2) COGS           = cost of MATERIALS ACTUALLY CONSUMED in period
+//                     (inventory movements type 'usage'/'sold' × costPerUnit).
+//                     Consumption is recognized at USE time, not purchase time.
+// 3) GROSS PROFIT   = Revenue − COGS.
+// 4) GROSS MARGIN   = Gross Profit / Revenue × 100.
+// 5) OPERATING EXP  = expenses collection MINUS restock-linked acquisition
+//                     (expenses carrying `inventoryTransactionId` are inventory
+//                     PURCHASES, not period expenses — see 7).
+// 6) NET PROFIT     = Gross Profit − Operating Expenses.
+// 7) DOUBLE-COUNT PREVENTION:
+//    - Inventory RESTOCK (acquisition) writes an expense only as a LINKED record
+//      (inventoryTransactionId). That ₱ amount is NOT a P&L expense of the period:
+//      it bought an ASSET (inventory). It is shown as a memo line only.
+//    - When material is later USED by a sale/project, an inventory movement is
+//      created and COGS recognizes the cost ONCE.
+//    - Project expenses (project_expenses) are the PROJECT's cost view; the P&L
+//      uses inventory movements for COGS so a material is never counted twice.
+//    Example: buy ₱5,000 material (restock, memo only) → use ₱3,000 for a project
+//    (COGS ₱3,000 recognized once; project expense record shows the ₱3,000 too,
+//    but P&L counts it only via COGS — the ₱2,000 still in stock is an asset).
+// ============================================================
 function getPnLRange() {
   const period = document.getElementById('pnlPeriod').value;
   document.getElementById('pnlCustom').classList.toggle('hidden', period !== 'custom');
