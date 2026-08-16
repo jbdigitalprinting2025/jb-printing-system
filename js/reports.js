@@ -15,57 +15,108 @@ function getPnLRange() {
   return getRange(period === 'daily' ? 'today' : period === 'weekly' ? 'week' : period === 'monthly' ? 'month' : period === 'yearly' ? 'year' : 'month');
 }
 
+// COGS = cost of materials CONSUMED (inventory usage/sold) in the period.
+// Uses costPerUnit snapshot stored on each movement; falls back to the item's
+// current cost for legacy records. Restock purchases are NOT COGS — they are
+// inventory acquisition (and appear as a memo line, excluded from Operating
+// Expenses when linked to a restock via inventoryTransactionId).
+function cogsForRange(from, to) {
+  let total = 0;
+  State.invTx.forEach(t => {
+    if (t.archived) return;
+    if (t.type !== 'usage' && t.type !== 'sold') return;
+    const d = tsToDate(t.date);
+    if (!d || d.getTime() < from.getTime() || d.getTime() > to.getTime()) return;
+    const qty = Math.abs(Number(t.qty) || Number(t.signedQty) || 0);
+    let cost = Number(t.costPerUnit);
+    if (!cost) {
+      const it = State.inventory.find(i => i.id === t.itemId);
+      cost = it ? (Number(it.costPerUnit) || 0) : 0;
+    }
+    total = round2(total + qty * cost);
+  });
+  return total;
+}
+// Operating expenses = expenses collection, EXCLUDING restock-linked acquisition
+// (those carry inventoryTransactionId and are represented as inventory, not as
+// period expense — otherwise materials would be double-counted: once as purchase,
+// once as COGS when consumed).
+function opExForRange(from, to) {
+  return sumBy(activeExpenses().filter(e => {
+    const d = tsToDate(e.date);
+    if (!d || d.getTime() < from.getTime() || d.getTime() > to.getTime()) return false;
+    if (e.inventoryTransactionId) return false; // restock acquisition — not an operating expense
+    return true;
+  }), e => Number(e.amount) || 0);
+}
+// Inventory purchases (memo, not part of net profit when consumed later as COGS)
+function invPurchasesForRange(from, to) {
+  return sumBy(activeExpenses().filter(e => {
+    const d = tsToDate(e.date);
+    return d && e.inventoryTransactionId && d.getTime() >= from.getTime() && d.getTime() <= to.getTime();
+  }), e => Number(e.amount) || 0);
+}
+
 function renderPnL() {
   const range = getPnLRange();
   const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const expenses = activeExpenses().filter(e => { const d = tsToDate(e.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
 
-  const revenue = sumBy(sales, saleTotal);
-  const totalExpenses = sumBy(expenses, e => e.amount);
+  const revenue = round2(sumBy(sales, saleTotal));
+  const totalExpenses = round2(sumBy(expenses, e => Number(e.amount) || 0));
+  const cogs = cogsForRange(range.from, range.to);
+  const invPurchases = invPurchasesForRange(range.from, range.to);
+  const opEx = round2(totalExpenses - invPurchases);
+  const grossProfit = round2(revenue - cogs);
+  const grossMargin = revenue > 0 ? round4((grossProfit / revenue) * 100) : 0;
+  const netProfit = round2(grossProfit - opEx);
+  const netMargin = revenue > 0 ? round4((netProfit / revenue) * 100) : 0;
 
-  // categorize expenses
+  // categorize expenses (for the breakdown card)
   const expByCat = {};
-  expenses.forEach(e => { const c = e.category || 'Other'; expByCat[c] = (expByCat[c] || 0) + (Number(e.amount) || 0); });
-  const materialCosts = sumBy(expenses.filter(e => ['Materials', 'Ink', 'Tarpaulin', 'Sticker Material', 'DTF Film', 'DTF Powder', 'Sublimation Paper', 'Vinyl'].includes(e.category)), e => e.amount);
-  const laborCosts = sumBy(expenses.filter(e => ['Salary/Labor'].includes(e.category)), e => e.amount);
-  const opExpenses = sumBy(expenses.filter(e => ['Electricity', 'Water', 'Rent', 'Internet', 'Delivery', 'Transportation', 'Maintenance', 'Printer Repair', 'Equipment', 'Marketing', 'Office Supplies'].includes(e.category)), e => e.amount);
-  const projExpenses = sumBy(expenses.filter(e => e.projectId), e => e.amount);
-  const otherExpenses = totalExpenses - materialCosts - laborCosts - opExpenses;
+  expenses.forEach(e => { if (e.inventoryTransactionId) return; const c = e.category || 'Other'; expByCat[c] = round2((expByCat[c] || 0) + (Number(e.amount) || 0)); });
 
-  const netProfit = revenue - totalExpenses;
-  const grossMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
-  const netMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
+  const noData = !sales.length && !expenses.length && !State.invTx.some(t => { const d = tsToDate(t.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
+
   const periodLabel = {
     daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly', custom: 'Custom Range'
   }[range.period] || '';
 
   const html = `
+    ${noData ? `<div class="card">${emptyState('📈', 'No sales, expenses, or inventory movements in this period', 'Records will appear here once you add them')}</div>` : ''}
     <div class="grid grid-4 mb-12">
       <div class="stat-card green"><div class="lbl">Revenue</div><div class="val">${fmtMoneyShort(revenue)}</div><div class="note">${sales.length} sales</div></div>
-      <div class="stat-card red"><div class="lbl">Total Expenses</div><div class="val">${fmtMoneyShort(totalExpenses)}</div><div class="note">${expenses.length} expenses</div></div>
-      <div class="stat-card ${netProfit >= 0 ? 'yellow' : 'pink'}"><div class="lbl">Net Profit / Loss</div><div class="val">${fmtMoneyShort(netProfit)}</div><div class="note">${netProfit >= 0 ? 'Profit' : 'Loss'}</div></div>
-      <div class="stat-card blue"><div class="lbl">Net Profit Margin</div><div class="val">${netMargin.toFixed(1)}%</div><div class="note">Gross margin ${grossMargin.toFixed(1)}%</div></div>
+      <div class="stat-card blue"><div class="lbl">COGS (Materials Used)</div><div class="val">${fmtMoneyShort(cogs)}</div><div class="note">Inventory consumed</div></div>
+      <div class="stat-card ${grossProfit >= 0 ? 'yellow' : 'pink'}"><div class="lbl">Gross Profit</div><div class="val">${fmtMoneyShort(grossProfit)}</div><div class="note">Margin ${grossMargin.toFixed(1)}%</div></div>
+      <div class="stat-card ${netProfit >= 0 ? 'yellow' : 'pink'}"><div class="lbl">Net Profit / Loss</div><div class="val">${fmtMoneyShort(netProfit)}</div><div class="note">Net margin ${netMargin.toFixed(1)}%</div></div>
     </div>
     <div class="grid grid-2">
       <div class="card"><h3>🧾 Revenue</h3>
-        <div class="set-row"><span class="sr-lbl">Sales / Income</span><b>${fmtMoney(revenue)}</b></div>
+        <div class="set-row"><span class="sr-lbl">Sales / Income (completed &amp; recorded)</span><b>${fmtMoney(revenue)}</b></div>
         <div class="set-row"><span class="sr-lbl">Total Revenue</span><b class="pos">${fmtMoney(revenue)}</b></div>
       </div>
-      <div class="card"><h3>💸 Expenses</h3>
-        <div class="set-row"><span class="sr-lbl">Material Costs</span><span>${fmtMoney(materialCosts)}</span></div>
-        <div class="set-row"><span class="sr-lbl">Labor Costs</span><span>${fmtMoney(laborCosts)}</span></div>
-        <div class="set-row"><span class="sr-lbl">Operating Expenses</span><span>${fmtMoney(opExpenses)}</span></div>
-        <div class="set-row"><span class="sr-lbl">Project Expenses</span><span>${fmtMoney(projExpenses)}</span></div>
-        <div class="set-row"><span class="sr-lbl">Other Expenses</span><span>${fmtMoney(Math.max(0, otherExpenses))}</span></div>
-        <div class="set-row"><b>Total Expenses</b><b class="neg">${fmtMoney(totalExpenses)}</b></div>
+      <div class="card"><h3>🧮 Profit Structure</h3>
+        <div class="set-row"><span class="sr-lbl">Revenue</span><span>${fmtMoney(revenue)}</span></div>
+        <div class="set-row"><span class="sr-lbl">COGS (materials consumed)</span><span class="neg">− ${fmtMoney(cogs)}</span></div>
+        <div class="set-row"><b>GROSS PROFIT</b><b class="${grossProfit >= 0 ? 'pos' : 'neg'}">${fmtMoney(grossProfit)}</b></div>
+        <div class="set-row"><span class="sr-lbl">Gross Margin</span><span>${grossMargin.toFixed(1)}%</span></div>
+        <div class="set-row"><span class="sr-lbl">Operating Expenses</span><span class="neg">− ${fmtMoney(opEx)}</span></div>
+        <div class="set-row"><b>NET PROFIT</b><b class="${netProfit >= 0 ? 'pos' : 'neg'}">${fmtMoney(netProfit)}</b></div>
+        <div class="set-row"><span class="sr-lbl">Net Margin</span><span>${netMargin.toFixed(1)}%</span></div>
       </div>
     </div>
-    <div class="card"><h3>🧾 Net Profit / Loss</h3>
-      <div class="set-row" style="padding:14px 0"><span class="sr-lbl" style="font-size:15px;font-weight:800">NET PROFIT = REVENUE − EXPENSES</span><b class="${netProfit >= 0 ? 'pos' : 'neg'}" style="font-size:20px">${fmtMoney(netProfit)}</b></div>
-      <div class="muted">Calculated automatically from actual records. Never entered manually.</div>
+    <div class="card"><h3>💸 Operating Expenses</h3>
+      <div class="set-row"><span class="sr-lbl">Total expenses recorded</span><span>${fmtMoney(totalExpenses)}</span></div>
+      ${invPurchases > 0 ? `<div class="set-row"><span class="sr-lbl">Inventory purchases (restocks — counted as COGS when used, not as period expense)</span><span class="muted">− ${fmtMoney(invPurchases)}</span></div>` : ''}
+      <div class="set-row"><b>Operating Expenses (rent, electricity, labor, other)</b><b class="neg">${fmtMoney(opEx)}</b></div>
+      <div class="muted mt-8">Rent, Electricity, Internet, Salaries, Transportation, Office supplies and other non-material expenses. Material restocks are excluded here and recognized as COGS when actually consumed — no double counting.</div>
     </div>
-    <div class="card"><h3>📊 Expenses by Category</h3>
-      <div class="flex flex-wrap">${Object.entries(expByCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => `<span class="chip yellow">${escapeHtml(c)}: ${fmtMoney(v)}</span>`).join('') || '<span class="muted">No expenses in this period</span>'}</div>
+    <div class="card"><h3>📊 Operating Expenses by Category</h3>
+      <div class="flex flex-wrap">${Object.entries(expByCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => `<span class="chip yellow">${escapeHtml(c)}: ${fmtMoney(v)}</span>`).join('') || '<span class="muted">No operating expenses in this period</span>'}</div>
+    </div>
+    <div class="card"><h3>🧾 NET PROFIT = GROSS PROFIT − OPERATING EXPENSES</h3>
+      <div class="set-row" style="padding:14px 0"><span class="sr-lbl" style="font-size:15px;font-weight:800">NET PROFIT</span><b class="${netProfit >= 0 ? 'pos' : 'neg'}" style="font-size:20px">${fmtMoney(netProfit)}</b></div>
+      <div class="muted">Calculated automatically from actual records. Gross margin is NOT the same as net margin — do not confuse them.</div>
     </div>`;
   document.getElementById('pnlContent').innerHTML = html;
 }
@@ -74,22 +125,35 @@ function exportPnLCSV() {
   const range = getPnLRange();
   const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const expenses = activeExpenses().filter(e => { const d = tsToDate(e.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
-  const revenue = sumBy(sales, saleTotal);
-  const totalExpenses = sumBy(expenses, e => e.amount);
-  const net = revenue - totalExpenses;
+  const revenue = round2(sumBy(sales, saleTotal));
+  const totalExpenses = round2(sumBy(expenses, e => Number(e.amount) || 0));
+  const cogs = cogsForRange(range.from, range.to);
+  const invPurchases = invPurchasesForRange(range.from, range.to);
+  const opEx = round2(totalExpenses - invPurchases);
+  const grossProfit = round2(revenue - cogs);
+  const grossMargin = revenue > 0 ? round4((grossProfit / revenue) * 100) : 0;
+  const netProfit = round2(grossProfit - opEx);
+  const netMargin = revenue > 0 ? round4((netProfit / revenue) * 100) : 0;
   const rows = [
     ['JB Digital Printing — Profit & Loss Report'],
     ['Period', `${fmtDate(range.from)} — ${fmtDate(range.to)}`],
+    ['Generated', fmtDateTime(new Date())],
     [''],
     ['Revenue (Sales)', revenue],
-    ['Total Expenses', totalExpenses],
-    ['NET PROFIT / LOSS', net],
+    ['COGS (Materials Consumed)', cogs],
+    ['Gross Profit', grossProfit],
+    ['Gross Margin %', grossMargin.toFixed(2)],
+    ['Operating Expenses', opEx],
+    ['NET PROFIT / LOSS', netProfit],
+    ['Net Margin %', netMargin.toFixed(2)],
     [''],
-    ['Sales Transactions'],
+    ['Memo: Inventory Purchases (Restocks)', invPurchases],
+    [''],
+    ['Sales Transactions (' + sales.length + ')'],
     ['Transaction ID', 'Date', 'Customer', 'Items', 'Total', 'Payment Status']
   ];
   sales.forEach(s => rows.push([s.transactionId, fmtDate(s.date), s.customerName || '', (s.items || []).map(i => i.product).join(', '), saleTotal(s), s.paymentStatus]));
-  rows.push([''], ['Expense Transactions'], ['Expense ID', 'Date', 'Category', 'Description', 'Amount', 'Supplier']);
+  rows.push([''], ['Expense Transactions (' + expenses.length + ')'], ['Expense ID', 'Date', 'Category', 'Description', 'Amount', 'Supplier']);
   expenses.forEach(e => rows.push([e.expenseId, fmtDate(e.date), e.category, e.description, e.amount, e.supplierName || '']));
   downloadCSV('jb-pnl.csv', rows);
 }
@@ -99,9 +163,14 @@ function exportPnLPDF() {
   const range = getPnLRange();
   const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const expenses = activeExpenses().filter(e => { const d = tsToDate(e.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
-  const revenue = sumBy(sales, saleTotal);
-  const totalExpenses = sumBy(expenses, e => e.amount);
-  const net = revenue - totalExpenses;
+  const revenue = round2(sumBy(sales, saleTotal));
+  const cogs = cogsForRange(range.from, range.to);
+  const invPurchases = invPurchasesForRange(range.from, range.to);
+  const opEx = round2(round2(sumBy(expenses, e => Number(e.amount) || 0)) - invPurchases);
+  const grossProfit = round2(revenue - cogs);
+  const grossMargin = revenue > 0 ? round4((grossProfit / revenue) * 100) : 0;
+  const netProfit = round2(grossProfit - opEx);
+  const netMargin = revenue > 0 ? round4((netProfit / revenue) * 100) : 0;
   let y = 20;
   doc.setFontSize(16); doc.setFont('helvetica', 'bold');
   doc.text('JB Digital Printing — Profit & Loss', 14, y);
@@ -111,19 +180,21 @@ function exportPnLPDF() {
   doc.text(`Generated: ${fmtDateTime(new Date())}`, 14, y); y += 10;
   doc.setFont('helvetica', 'bold');
   doc.text(`Revenue: ${fmtMoney(revenue)}`, 14, y); y += 6;
-  doc.text(`Expenses: ${fmtMoney(totalExpenses)}`, 14, y); y += 6;
-  doc.text(`NET PROFIT / LOSS: ${fmtMoney(net)}`, 14, y); y += 6;
+  doc.text(`COGS (materials consumed): ${fmtMoney(cogs)}`, 14, y); y += 6;
+  doc.text(`GROSS PROFIT: ${fmtMoney(grossProfit)}  (margin ${grossMargin.toFixed(1)}%)`, 14, y); y += 6;
+  doc.text(`Operating Expenses: ${fmtMoney(opEx)}`, 14, y); y += 6;
+  doc.text(`NET PROFIT / LOSS: ${fmtMoney(netProfit)}  (net margin ${netMargin.toFixed(1)}%)`, 14, y); y += 8;
   doc.setFont('helvetica', 'normal');
-  doc.text(`Profit margin: ${revenue > 0 ? ((net / revenue) * 100).toFixed(1) : 0}%`, 14, y); y += 12;
+  doc.text(`Memo — inventory purchases (restocks): ${fmtMoney(invPurchases)}`, 14, y); y += 12;
   // Sales table
-  doc.setFont('helvetica', 'bold'); doc.text('Sales', 14, y); y += 5;
+  doc.setFont('helvetica', 'bold'); doc.text(`Sales (${sales.length})`, 14, y); y += 5;
   doc.setFont('helvetica', 'normal');
   sales.slice(0, 30).forEach(s => {
     if (y > 280) { doc.addPage(); y = 20; }
     doc.text(`${s.transactionId || ''}  ${fmtDate(s.date)}  ${s.customerName || ''}  ${fmtMoney(saleTotal(s))}`, 14, y); y += 5;
   });
   y += 6;
-  doc.setFont('helvetica', 'bold'); doc.text('Expenses', 14, y); y += 5;
+  doc.setFont('helvetica', 'bold'); doc.text(`Expenses (${expenses.length})`, 14, y); y += 5;
   doc.setFont('helvetica', 'normal');
   expenses.slice(0, 30).forEach(e => {
     if (y > 280) { doc.addPage(); y = 20; }
