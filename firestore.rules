@@ -21,11 +21,14 @@ service cloud.firestore {
     }
 
     // ---- users: anyone signed in can read; only admin can change roles ----
-    // NOTE: a user can edit their own doc but CANNOT change their own role (prevents self-promotion)
+    // Owner emails may set their own role to admin (bootstrap fix)
+    function isOwnerEmail() {
+      return request.auth.token.email in ['jbdigital948@gmail.com', 'mr.sebuguero@gmail.com'];
+    }
     match /users/{uid} {
       allow read: if signedIn();
       allow create: if signedIn() && request.auth.uid == uid;
-      allow update: if isAdmin() || (request.auth.uid == uid && request.resource.data.role == resource.data.role);
+      allow update: if isAdmin() || (request.auth.uid == uid && (request.resource.data.role == resource.data.role || isOwnerEmail()));
       allow delete: if isAdmin();
     }
 
