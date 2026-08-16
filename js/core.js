@@ -47,6 +47,25 @@ function updateTopBar() {
     document.getElementById('topbarBizName').textContent = settingsCache.businessName;
     document.getElementById('loginBizName').textContent = settingsCache.businessAddress || 'Tigaon, Camarines Sur';
   }
+  renderLogo();
+}
+// Show business logo in topbar + login screen (if set in settings)
+function renderLogo() {
+  const logo = settingsCache && settingsCache.businessLogo;
+  const setLogo = (elId) => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    if (logo) {
+      el.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = logo;
+      el.appendChild(img);
+    } else {
+      el.innerHTML = '🖨️';
+    }
+  };
+  setLogo('topbarLogo');
+  setLogo('loginLogo');
 }
 
 // ---- Login ----
