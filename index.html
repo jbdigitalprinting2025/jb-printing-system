@@ -564,6 +564,17 @@ table.tbl td.neg{color:var(--red);font-weight:700}
 
 <div id="toastWrap"></div>
 
+<!-- ====== LOADING OVERLAY ====== -->
+<div id="loadingOverlay">
+  <div class="load-box"><span class="spin"></span><div style="font-weight:700;margin-top:10px">Loading data...</div><div style="font-size:11.5px;color:var(--gray-500);margin-top:2px">Syncing with cloud</div></div>
+</div>
+<style>
+#loadingOverlay{position:fixed;inset:0;background:rgba(255,255,255,.85);z-index:600;display:none;align-items:center;justify-content:center}
+#loadingOverlay.show{display:flex}
+.load-box{background:var(--white);border-radius:16px;box-shadow:var(--shadow-lg);padding:26px 34px;text-align:center}
+.load-box .spin{border-top-color:var(--yellow-dark)}
+</style>
+
 <!-- Firebase SDKs -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -571,18 +582,18 @@ table.tbl td.neg{color:var(--red);font-weight:700}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="js/config.js?v=5"></script>
-<script src="js/db.js?v=5"></script>
-<script src="js/ui.js?v=5"></script>
-<script src="js/core.js?v=5"></script>
-<script src="js/dashboard.js?v=5"></script>
-<script src="js/calendar.js?v=5"></script>
-<script src="js/transactions.js?v=5"></script>
-<script src="js/inventory.js?v=5"></script>
-<script src="js/projects.js?v=5"></script>
-<script src="js/partners.js?v=5"></script>
-<script src="js/reports.js?v=5"></script>
-<script src="js/settings.js?v=5"></script>
-<script src="js/app.js?v=5"></script>
+<script src="js/config.js?v=6"></script>
+<script src="js/db.js?v=6"></script>
+<script src="js/ui.js?v=6"></script>
+<script src="js/core.js?v=6"></script>
+<script src="js/dashboard.js?v=6"></script>
+<script src="js/calendar.js?v=6"></script>
+<script src="js/transactions.js?v=6"></script>
+<script src="js/inventory.js?v=6"></script>
+<script src="js/projects.js?v=6"></script>
+<script src="js/partners.js?v=6"></script>
+<script src="js/reports.js?v=6"></script>
+<script src="js/settings.js?v=6"></script>
+<script src="js/app.js?v=6"></script>
 </body>
 </html>
