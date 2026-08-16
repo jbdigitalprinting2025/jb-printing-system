@@ -149,10 +149,9 @@ function openSaleModal(existing, presetDate) {
   });
 }
 function nextTxnId() {
+  // Guaranteed unique: Firestore doc id slice + date (no random collision risk)
   const d = new Date();
-  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-  const n = Math.floor(1000 + Math.random() * 9000);
-  return `S-${ymd}-${n}`;
+  return genBizId('S', d);
 }
 function togglePaidField() {
   const status = document.getElementById('saleStatus').value;
@@ -209,6 +208,10 @@ function calcSaleGrandTotal() {
 }
 async function saveSale(existing) {
   if (!guardWrite()) return;
+  if (!busyStart()) return;
+  const btn = document.getElementById('saveSaleBtn');
+  if (btn) btn.disabled = true;
+  try {
   const date = parseDateInput(document.getElementById('saleDate').value);
   if (!date) { showToast('Please pick a date', 'error'); return; }
   const items = [];
@@ -219,10 +222,14 @@ async function saveSale(existing) {
     const qty = parseFloat(r.querySelector('.si-qty').value) || 0;
     const unitPrice = parseFloat(r.querySelector('.si-price').value) || 0;
     if (!product || qty <= 0) return;
-    items.push({ product, category, qty, unitPrice, total: qty * unitPrice });
-    total += qty * unitPrice;
+    if (qty < 0 || unitPrice < 0) return;
+    const lineTotal = round2(qty * unitPrice);
+    items.push({ product, category, qty, unitPrice, total: lineTotal });
+    total = round2(total + lineTotal);
   });
   if (!items.length) { showToast('Add at least one item with product name', 'error'); return; }
+  if (total <= 0) { showToast('Sale total must be greater than zero', 'error'); return; }
+  if (total > 999999999) { showToast('Amount too large', 'error'); return; }
 
   let customerName = document.getElementById('saleCustomer').value;
   if (customerName === '__custom__') {
@@ -230,10 +237,21 @@ async function saveSale(existing) {
     if (!customerName) { showToast('Enter new customer name', 'error'); return; }
     await ensureCustomer(customerName);
   }
-  const paymentStatus = document.getElementById('saleStatus').value;
-  const amountPaid = paymentStatus === 'Partial' ? (parseFloat(document.getElementById('salePaid').value) || 0) : (paymentStatus === 'Paid' ? total : 0);
+  const paymentStatusRaw = document.getElementById('saleStatus').value;
+  // Resolve payment consistently: Partial with paid >= total => Paid; paid > total => reject
+  const resolved = resolvePayment(paymentStatusRaw, total, parseFloat(document.getElementById('salePaid').value) || 0);
+  if (!resolved.ok) { showToast(resolved.error, 'error'); return; }
+  const paymentStatus = resolved.status;
+  const amountPaid = resolved.amountPaid;
+
+  let txnId = document.getElementById('saleTxnId').value.trim() || nextTxnId();
+  // uniqueness guard against existing ids (belt & suspenders)
+  const existingIds = State.sales.map(s => s.transactionId).filter(Boolean);
+  if (existingIds.includes(txnId) && !(existing && existing.transactionId === txnId)) {
+    txnId = uniqueBizId('S', date, existingIds);
+  }
   const data = {
-    transactionId: document.getElementById('saleTxnId').value.trim() || nextTxnId(),
+    transactionId: txnId,
     date: firebase.firestore.Timestamp.fromDate(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0)),
     customerName: customerName || '',
     items: items,
@@ -247,24 +265,47 @@ async function saveSale(existing) {
     updatedAt: nowTS()
   };
 
-  try {
     if (existing) {
       const prev = State.sales.find(x => x.id === existing.id);
       await db.collection(COLL.sales).doc(existing.id).update(data);
-      await logAudit('edited', 'sale', existing.id, { prevTotal: prev ? saleTotal(prev) : null }, { newTotal: total });
+      await logAudit('edited', 'sale', existing.id, { prevTotal: prev ? saleTotal(prev) : null, prevStatus: prev ? prev.paymentStatus : null }, { newTotal: total, status: paymentStatus });
       showToast('Sale updated ✓', 'success');
     } else {
       data.createdAt = nowTS();
       const ref = await db.collection(COLL.sales).add(data);
-      await logAudit('created', 'sale', ref.id, null, { total });
+      await logAudit('created', 'sale', ref.id, null, { total, status: paymentStatus });
       showToast('Sale saved ✓', 'success');
     }
     closeModal();
     renderSales(); renderDashboard();
   } catch (e) {
     console.error(e);
-    showToast('Error saving: ' + (e.message || ''), 'error');
+    showToast(friendlyError(e, 'Unable to save sale. Please try again.'), 'error');
+  } finally {
+    busyEnd();
+    if (btn) btn.disabled = false;
   }
+}
+
+// Pure payment-resolution logic (testable): never produces negative balance.
+// Returns {ok, status, amountPaid, balance} or {ok:false, error}.
+function resolvePayment(status, total, amountPaidRaw) {
+  const t = round2(Number(total) || 0);
+  let a = round2(Number(amountPaidRaw) || 0);
+  if (a < 0) return { ok: false, error: 'Amount paid cannot be negative.' };
+  if (a > 999999999) return { ok: false, error: 'Amount too large.' };
+  if (status === 'Paid') {
+    a = t;
+    return { ok: true, status: 'Paid', amountPaid: a, balance: 0 };
+  }
+  if (status === 'Unpaid') {
+    return { ok: true, status: 'Unpaid', amountPaid: 0, balance: t };
+  }
+  // Partial
+  if (a > t) return { ok: false, error: `Amount paid cannot exceed the total (${fmtMoney(t)}).` };
+  if (a === t) return { ok: true, status: 'Paid', amountPaid: a, balance: 0 };
+  if (a > 0) return { ok: true, status: 'Partial', amountPaid: a, balance: round2(t - a) };
+  return { ok: true, status: 'Unpaid', amountPaid: 0, balance: t };
 }
 function editSale(id) {
   const s = State.sales.find(x => x.id === id);
@@ -422,14 +463,21 @@ function toggleCustomSupplier(force) {
 }
 async function saveExpense(existing) {
   if (!guardWrite()) return;
+  if (!busyStart()) return;
+  const btn = document.getElementById('saveExpBtn');
+  if (btn) btn.disabled = true;
+  try {
   const date = parseDateInput(document.getElementById('expDate').value);
   if (!date) { showToast('Please pick a date', 'error'); return; }
-  const amount = parseFloat(document.getElementById('expAmount').value);
+  const amount = round2(parseFloat(document.getElementById('expAmount').value));
   if (isNaN(amount) || amount <= 0) { showToast('Enter a valid amount', 'error'); return; }
+  if (amount > 999999999) { showToast('Amount too large', 'error'); return; }
   let supplierName = document.getElementById('expSupplier').value;
   if (supplierName === '__custom__') supplierName = document.getElementById('expNewSupplier').value.trim();
+  let expenseId = document.getElementById('expId').value.trim();
+  if (!expenseId) expenseId = uniqueBizId('E', date, State.expenses.map(e => e.expenseId).filter(Boolean));
   const data = {
-    expenseId: document.getElementById('expId').value.trim() || `E-${Date.now().toString(36).toUpperCase()}`,
+    expenseId: expenseId,
     date: firebase.firestore.Timestamp.fromDate(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0)),
     category: document.getElementById('expCat').value,
     description: document.getElementById('expDesc').value.trim(),
@@ -442,7 +490,6 @@ async function saveExpense(existing) {
     archived: false,
     updatedAt: nowTS()
   };
-  try {
     if (existing) {
       const prev = State.expenses.find(x => x.id === existing.id);
       await db.collection(COLL.expenses).doc(existing.id).update(data);
@@ -456,7 +503,8 @@ async function saveExpense(existing) {
     }
     closeModal();
     renderExpenses(); renderDashboard();
-  } catch (e) { console.error(e); showToast('Error saving: ' + (e.message || ''), 'error'); }
+  } catch (e) { console.error(e); showToast(friendlyError(e, 'Unable to save expense. Please try again.'), 'error'); }
+  finally { busyEnd(); if (btn) btn.disabled = false; }
 }
 function editExpense(id) {
   const e = State.expenses.find(x => x.id === id);
