@@ -155,7 +155,7 @@ async function loadAllData() {
     fetchColl(COLL.sales, 'sales'),
     fetchColl(COLL.expenses, 'expenses'),
     fetchColl(COLL.inventory, 'inventory'),
-    fetchColl(COLL.invTx, 'invTx', 200),
+    fetchColl(COLL.invTx, 'invTx', 5000),
     fetchColl(COLL.projects, 'projects'),
     fetchColl(COLL.projRev, 'projRev'),
     fetchColl(COLL.projExp, 'projExp'),
