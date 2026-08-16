@@ -76,16 +76,21 @@ function openCustomerModal(existing) {
 }
 async function saveCustomer(existing) {
   if (!guardWrite()) return;
+  if (!busyStart()) return;
+  const btn = document.getElementById('saveCustBtn');
+  if (btn) btn.disabled = true;
+  try {
   const name = document.getElementById('cName').value.trim();
   if (!name) { showToast('Name is required', 'error'); return; }
+  const email = document.getElementById('cEmail').value.trim();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast('Invalid email address', 'error'); return; }
   const data = {
     name, contactNumber: document.getElementById('cContact').value.trim(),
-    email: document.getElementById('cEmail').value.trim(),
+    email: email,
     address: document.getElementById('cAddress').value.trim(),
     notes: document.getElementById('cNotes').value.trim(),
     updatedAt: nowTS()
   };
-  try {
     if (existing) {
       await db.collection(COLL.customers).doc(existing.id).update(data);
       await logAudit('edited', 'customer', existing.id, null, { name });
@@ -98,7 +103,8 @@ async function saveCustomer(existing) {
     }
     closeModal();
     renderCustomers();
-  } catch (e) { console.error(e); showToast('Error: ' + (e.message || ''), 'error'); }
+  } catch (e) { console.error(e); showToast(friendlyError(e, 'Unable to save customer. Please try again.'), 'error'); }
+  finally { busyEnd(); if (btn) btn.disabled = false; }
 }
 function editCustomer(id) {
   const c = State.customers.find(x => x.id === id);
@@ -221,18 +227,23 @@ function openSupplierModal(existing) {
 }
 async function saveSupplier(existing) {
   if (!guardWrite()) return;
+  if (!busyStart()) return;
+  const btn = document.getElementById('saveSupBtn');
+  if (btn) btn.disabled = true;
+  try {
   const name = document.getElementById('sName').value.trim();
   if (!name) { showToast('Name is required', 'error'); return; }
+  const email = document.getElementById('sEmail').value.trim();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast('Invalid email address', 'error'); return; }
   const data = {
     name, contactPerson: document.getElementById('sPerson').value.trim(),
     phone: document.getElementById('sPhone').value.trim(),
-    email: document.getElementById('sEmail').value.trim(),
+    email: email,
     address: document.getElementById('sAddress').value.trim(),
     productsSupplied: document.getElementById('sProducts').value.split(',').map(x => x.trim()).filter(Boolean),
     notes: document.getElementById('sNotes').value.trim(),
     updatedAt: nowTS()
   };
-  try {
     if (existing) {
       await db.collection(COLL.suppliers).doc(existing.id).update(data);
       await logAudit('edited', 'supplier', existing.id, null, { name });
@@ -245,7 +256,8 @@ async function saveSupplier(existing) {
     }
     closeModal();
     renderSuppliers();
-  } catch (e) { console.error(e); showToast('Error: ' + (e.message || ''), 'error'); }
+  } catch (e) { console.error(e); showToast(friendlyError(e, 'Unable to save supplier. Please try again.'), 'error'); }
+  finally { busyEnd(); if (btn) btn.disabled = false; }
 }
 function editSupplier(id) {
   const s = State.suppliers.find(x => x.id === id);
