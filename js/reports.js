@@ -177,7 +177,7 @@ function exportPnLCSV() {
     ['Sales Transactions (' + sales.length + ')'],
     ['Transaction ID', 'Date', 'Customer', 'Items', 'Total', 'Payment Status']
   ];
-  sales.forEach(s => rows.push([s.transactionId, fmtDate(s.date), s.customerName || '', (s.items || []).map(i => i.product).join(', '), saleTotal(s), s.paymentStatus]));
+  sales.forEach(s => rows.push([s.transactionId, fmtDate(s.date), s.customerName || '', (Array.isArray(s.items) ? s.items : []).map(i => i.product).join(', '), saleTotal(s), s.paymentStatus]));
   rows.push([''], ['Expense Transactions (' + expenses.length + ')'], ['Expense ID', 'Date', 'Category', 'Description', 'Amount', 'Supplier']);
   expenses.forEach(e => rows.push([e.expenseId, fmtDate(e.date), e.category, e.description, e.amount, e.supplierName || '']));
   downloadCSV('jb-pnl.csv', rows);
@@ -334,7 +334,7 @@ function exportDailyExcel() {
   const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const expenses = activeExpenses().filter(e => { const d = tsToDate(e.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const wb = XLSX.utils.book_new();
-  const ws1 = XLSX.utils.json_to_sheet(sales.map(s => ({ 'Transaction ID': s.transactionId, 'Date': fmtDate(s.date), 'Customer': s.customerName, 'Items': (s.items || []).map(i => i.product).join(', '), 'Total': saleTotal(s), 'Payment': s.paymentStatus, 'Method': s.paymentMethod })));
+  const ws1 = XLSX.utils.json_to_sheet(sales.map(s => ({ 'Transaction ID': s.transactionId, 'Date': fmtDate(s.date), 'Customer': s.customerName, 'Items': (Array.isArray(s.items) ? s.items : []).map(i => i.product).join(', '), 'Total': saleTotal(s), 'Payment': s.paymentStatus, 'Method': s.paymentMethod })));
   XLSX.utils.book_append_sheet(wb, ws1, 'Sales');
   const ws2 = XLSX.utils.json_to_sheet(expenses.map(e => ({ 'Expense ID': e.expenseId, 'Date': fmtDate(e.date), 'Category': e.category, 'Description': e.description, 'Amount': e.amount, 'Supplier': e.supplierName })));
   XLSX.utils.book_append_sheet(wb, ws2, 'Expenses');
