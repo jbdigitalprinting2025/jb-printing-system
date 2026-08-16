@@ -21,6 +21,19 @@ function renderSettings() {
       <button class="btn btn-yellow btn-sm mt-8" onclick="saveBizSettings()">💾 Save Business Info</button>
     </div>
 
+    <div class="set-group"><h3>🖼 Business Logo</h3><div class="desc">I-upload ang logo ng business mo. Lalabas sa taas ng app at sa login screen.</div>
+      <div class="flex" style="align-items:center;gap:14px;flex-wrap:wrap">
+        <div id="logoPreview" style="width:64px;height:64px;border-radius:14px;background:var(--gray-100);border:2px dashed var(--gray-300);display:flex;align-items:center;justify-content:center;font-size:30px;overflow:hidden">🖨️</div>
+        <div>
+          <button class="btn btn-outline btn-sm" onclick="document.getElementById('logoFileInput').click()">📷 Pumili ng Logo</button>
+          <input type="file" id="logoFileInput" accept="image/*" class="hidden" onchange="previewLogo(this)">
+          <button class="btn btn-yellow btn-sm mt-8" onclick="saveLogo()">💾 Save Logo</button>
+          ${settingsCache && settingsCache.businessLogo ? `<button class="btn btn-danger btn-sm mt-8" onclick="removeLogo()">🗑 Remove</button>` : ''}
+        </div>
+      </div>
+      <div class="muted mt-8" style="font-size:11px">Pinakamaganda: square na image (PNG o JPG). Awtomatikong ni-resize sa laki para sa app.</div>
+    </div>
+
     <div class="set-group"><h3>📂 Categories</h3><div class="desc">Used in sales, expenses, and inventory. Add your own.</div>
       <div class="set-row"><span class="sr-lbl">Sales Categories</span><button class="btn btn-outline btn-sm" onclick="editCategories('sales')">✎ Manage</button></div>
       <div class="set-row"><span class="sr-lbl">Expense Categories</span><button class="btn btn-outline btn-sm" onclick="editCategories('expenses')">✎ Manage</button></div>
@@ -68,6 +81,8 @@ function renderSettings() {
   `;
   renderUserList();
   renderAuditLog();
+  renderLogoPreview();
+  renderLogo();
 }
 
 async function saveBizSettings() {
@@ -86,6 +101,77 @@ async function saveBizSettings() {
     updateTopBar();
     showToast('Settings saved ✓', 'success');
   } catch (e) { showToast('Error: ' + (e.message || ''), 'error'); }
+}
+
+// ---- Business logo ----
+let _logoDataUrl = null;
+function renderLogoPreview() {
+  const el = document.getElementById('logoPreview');
+  if (!el) return;
+  const logo = _logoDataUrl || (settingsCache && settingsCache.businessLogo);
+  if (logo) {
+    el.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = logo;
+    img.style.cssText = 'width:100%;height:100%;object-fit:contain';
+    el.appendChild(img);
+  } else {
+    el.innerHTML = '🖨️';
+  }
+}
+function previewLogo(input) {
+  const file = input.files && input.files[0];
+  if (!file) { showToast('Pumili ng image file', 'error'); return; }
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    const img = new Image();
+    img.onload = function () {
+      // Resize to max 256x256 to keep Firestore doc small
+      const max = 256;
+      let w = img.width, h = img.height;
+      if (w > max || h > max) {
+        const ratio = Math.min(max / w, max / h);
+        w = Math.round(w * ratio); h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      _logoDataUrl = canvas.toDataURL('image/png');
+      renderLogoPreview();
+      showToast('Logo ready — i-click ang Save Logo', 'info');
+    };
+    img.onerror = function () { showToast('Hindi mabasa ang image', 'error'); };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+async function saveLogo() {
+  if (!guardAdmin()) return;
+  if (!_logoDataUrl) { showToast('Pumili muna ng logo image', 'error'); return; }
+  try {
+    await saveSettings({ businessLogo: _logoDataUrl });
+    await logAudit('edited', 'logo', 'main', null, { hasLogo: true });
+    _logoDataUrl = null;
+    renderLogo();
+    renderSettings();
+    showToast('Logo saved ✓', 'success');
+  } catch (e) { showToast('Error: ' + (e.message || ''), 'error'); }
+}
+async function removeLogo() {
+  if (!guardAdmin()) return;
+  confirmModal('Alisin ang logo?', 'Babalik sa default na 🖨️ icon.', async () => {
+    try {
+      await saveSettings({ businessLogo: '' });
+      await logAudit('edited', 'logo', 'main', null, { hasLogo: false });
+      _logoDataUrl = null;
+      renderLogo();
+      renderSettings();
+      showToast('Logo removed', 'success');
+    } catch (e) { showToast('Error: ' + (e.message || ''), 'error'); }
+  });
 }
 
 // ---- Categories editor ----
