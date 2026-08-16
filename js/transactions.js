@@ -208,6 +208,7 @@ function calcSaleGrandTotal() {
 }
 async function saveSale(existing) {
   if (!guardWrite()) return;
+  if (!guardOnline()) return;
   if (!busyStart()) return;
   const btn = document.getElementById('saveSaleBtn');
   if (btn) btn.disabled = true;
@@ -463,6 +464,7 @@ function toggleCustomSupplier(force) {
 }
 async function saveExpense(existing) {
   if (!guardWrite()) return;
+  if (!guardOnline()) return;
   if (!busyStart()) return;
   const btn = document.getElementById('saveExpBtn');
   if (btn) btn.disabled = true;
