@@ -48,6 +48,14 @@ async function loadUserDoc() {
     const forcedRole = (ADMIN_EMAILS || []).includes((currentUser.email || '').toLowerCase()) ? 'admin' : null;
     if (snap.exists) {
       currentUserDoc = snap.data();
+      // Account deactivated by admin — rules already deny all business data;
+      // sign out with a clear message so the user isn't left on an empty shell.
+      if (currentUserDoc.removed === true) {
+        currentUserDoc = null;
+        await auth.signOut().catch(() => {});
+        if (typeof showToast === 'function') showToast('This account has been deactivated. Contact the administrator.', 'error');
+        return;
+      }
       if (forcedRole && currentUserDoc.role !== forcedRole) {
         currentUserDoc.role = forcedRole;
         await db.collection(COLL.users).doc(currentUser.uid).update({ role: forcedRole, updatedAt: nowTS() }).catch(() => {});
@@ -74,6 +82,15 @@ async function loadUserDoc() {
     }
   } catch (e) {
     console.error('loadUserDoc error', e);
+    // Permission denied on create = the rules refuse this account (e.g. it was
+    // previously removed and its record no longer exists). Do NOT fall back to
+    // viewer with business access — sign out instead.
+    if (e && (e.code === 'permission-denied' || /permission|denied/i.test(e.message || ''))) {
+      currentUserDoc = null;
+      await auth.signOut().catch(() => {});
+      if (typeof showToast === 'function') showToast('Account not authorized. Contact the administrator.', 'error');
+      return;
+    }
     currentUserDoc = { uid: currentUser.uid, email: currentUser.email, name: currentUser.email, role: 'viewer' };
   }
 }
