@@ -137,9 +137,14 @@ async function loadAllData() {
     fetchColl(COLL.customers, 'customers'),
     fetchColl(COLL.suppliers, 'suppliers'),
     fetchColl(COLL.payments, 'payments'),
-    fetchColl(COLL.audit, 'audit', 300),
     fetchColl(COLL.users, 'users')
   ];
+  // audit logs: only for admin/staff (viewer gets permission-denied otherwise)
+  if (currentUserDoc && currentUserDoc.role !== 'viewer') {
+    tasks.push(fetchColl(COLL.audit, 'audit', 300));
+  } else {
+    State.audit = [];
+  }
   await Promise.all(tasks);
 }
 async function fetchColl(collection, stateKey, limit = 1000) {
