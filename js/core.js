@@ -28,12 +28,18 @@ function showLogin() {
 function enterApp() {
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appShell').classList.add('visible');
+  const ld = document.getElementById('loadingOverlay');
+  if (ld) ld.classList.add('show');
   updateTopBar();
   loadAllData().then(() => {
     State.ready = true;
+    if (ld) ld.classList.remove('show');
     setupRealtime();
     go(State.currentPage);
     runRetentionCheck(); // data retention (archive/delete) — admin only, safe
+  }).catch(() => {
+    if (ld) ld.classList.remove('show');
+    showToast('Unable to load data. Check your connection and refresh.', 'error');
   });
 }
 function updateTopBar() {
@@ -155,16 +161,26 @@ async function loadAllData() {
     fetchColl(COLL.projExp, 'projExp'),
     fetchColl(COLL.customers, 'customers'),
     fetchColl(COLL.suppliers, 'suppliers'),
-    fetchColl(COLL.payments, 'payments'),
-    fetchColl(COLL.users, 'users')
+    fetchColl(COLL.payments, 'payments')
   ];
-  // audit logs: only for admin/staff (viewer gets permission-denied otherwise)
-  if (currentUserDoc && currentUserDoc.role !== 'viewer') {
+  // users + audit logs: admin only (rules deny others; avoids permission noise)
+  if (currentUserDoc && currentUserDoc.role === 'admin') {
+    tasks.push(fetchColl(COLL.users, 'users'));
     tasks.push(fetchColl(COLL.audit, 'audit', 300));
   } else {
+    State.users = [];
     State.audit = [];
   }
-  await Promise.all(tasks);
+  try {
+    await Promise.all(tasks);
+  } catch (e) {
+    // individual fetches swallow their own errors; this catches unexpected failures
+  }
+  const failed = State._loadErrors || [];
+  State._loadErrors = [];
+  if (failed.length) {
+    showToast('Unable to load some data: ' + failed.join(', ') + '. Check your connection.', 'error');
+  }
 }
 async function fetchColl(collection, stateKey, limit = 1000) {
   try {
@@ -177,6 +193,10 @@ async function fetchColl(collection, stateKey, limit = 1000) {
   } catch (e) {
     console.error('fetchColl error', collection, e);
     State[stateKey] = [];
+    if (e && e.code && e.code !== 'permission-denied') {
+      State._loadErrors = State._loadErrors || [];
+      State._loadErrors.push(collection);
+    }
   }
 }
 
@@ -192,8 +212,9 @@ function setupRealtime() {
     [COLL.suppliers, 'suppliers', onSuppliersChanged]
   ];
   subs.forEach(([coll, key, cb]) => {
+    // NOTE: no orderBy on snapshot — legacy docs may lack createdAt, which would
+    // fail the whole query. Views sort client-side instead.
     const un = db.collection(coll)
-      .orderBy('createdAt', 'desc')
       .onSnapshot(snap => {
         const items = [];
         snap.forEach(d => items.push({ id: d.id, ...d.data() }));
@@ -249,17 +270,17 @@ function expensesInRange(from, to) {
   });
 }
 function saleTotal(s) {
-  if (s.total !== undefined && s.total !== null) return Number(s.total) || 0;
-  return (s.items || []).reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0);
+  if (s.total !== undefined && s.total !== null) return round2(Number(s.total)) || 0;
+  return round2((s.items || []).reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0));
 }
 function salePaid(s) {
   const total = saleTotal(s);
   const status = s.paymentStatus || 'Unpaid';
   if (status === 'Paid') return total;
-  if (status === 'Partial') return Math.min(total, Number(s.amountPaid) || 0);
+  if (status === 'Partial') return round2(Math.min(total, Number(s.amountPaid) || 0));
   return 0;
 }
-function saleBalance(s) { return saleTotal(s) - salePaid(s); }
+function saleBalance(s) { return round2(saleTotal(s) - salePaid(s)); }
 function isArchived(doc) { return doc && doc.archived === true; }
 function activeSales() { return State.sales.filter(s => !isArchived(s)); }
 function activeExpenses() { return State.expenses.filter(e => !isArchived(e)); }
