@@ -194,7 +194,7 @@ function drawDashCharts(sales, expenses, range) {
   // 4. Revenue by category
   const revCat = {};
   sales.forEach(s => {
-    const items = s.items && s.items.length ? s.items : [{ category: s.category || 'Other', qty: 1, unitPrice: saleTotal(s) }];
+    const items = (Array.isArray(s.items) && s.items.length) ? s.items : [{ category: s.category || 'Other', qty: 1, unitPrice: saleTotal(s) }];
     items.forEach(it => {
       const cat = it.category || 'Other';
       revCat[cat] = (revCat[cat] || 0) + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0);
