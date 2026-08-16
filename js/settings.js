@@ -62,18 +62,19 @@ function renderSettings() {
       <button class="btn btn-outline btn-sm mt-8" onclick="runRetentionNow()">⚡ Run Cleanup Now</button>` : ''}
     </div>
 
-    <div class="set-group"><h3>💾 Backup & Restore</h3><div class="desc">Download all data as backup, or restore from a backup file. Restore overwrites current data — always backup first.</div>
+    ${canAdmin ? `
+    <div class="set-group"><h3>💾 Backup & Restore</h3><div class="desc">Download all data as backup, or restore from a backup file. Restore overwrites current data — always backup first. Admin only.</div>
       <div class="flex flex-wrap">
         <button class="btn btn-green btn-sm" onclick="exportBackup()">⬇ Download Backup (JSON)</button>
         <button class="btn btn-outline btn-sm" onclick="exportBackupExcel()">⬇ Backup as Excel</button>
-        ${canAdmin ? `<button class="btn btn-pink btn-sm" onclick="document.getElementById('restoreFile').click()">⬆ Restore from Backup</button>
-        <input type="file" id="restoreFile" accept=".json" class="hidden" onchange="restoreBackup(this.files[0])">` : ''}
+        <button class="btn btn-pink btn-sm" onclick="document.getElementById('restoreFile').click()">⬆ Restore from Backup</button>
+        <input type="file" id="restoreFile" accept=".json" class="hidden" onchange="restoreBackup(this.files[0])">
       </div>
     </div>
 
-    <div class="set-group"><h3>📜 Audit Log</h3><div class="desc">All important changes are recorded.</div>
+    <div class="set-group"><h3>📜 Audit Log</h3><div class="desc">All important changes are recorded. Admin only.</div>
       <div id="auditListWrap"></div>
-    </div>
+    </div>` : ''}
 
     <div class="set-group"><h3>🔐 Account</h3><div class="desc">Signed in as <b>${escapeHtml(currentUserDoc ? currentUserDoc.email : '')}</b> (${escapeHtml(currentUserDoc ? currentUserDoc.role : '')})</div>
       <button class="btn btn-gray btn-sm" onclick="doLogout()">🚪 Sign Out</button>
@@ -311,15 +312,21 @@ function retentionCutoff() {
 }
 function retentionEligibleCount() {
   const ret = getRetentionConfig();
-  if (ret.mode === 'disabled' || !ret.enabled) return { sales: 0, expenses: 0, payments: 0, total: 0, oldest: null };
+  if (ret.mode === 'disabled' || !ret.enabled) return { sales: 0, expenses: 0, payments: 0, invTx: 0, projRev: 0, projExp: 0, projects: 0, total: 0, oldest: null };
   const cutoff = retentionCutoff();
   const older = (d) => { const x = tsToDate(d); return x && x.getTime() < cutoff.getTime(); };
   const sales = activeSales().filter(s => older(s.date));
   const expenses = activeExpenses().filter(e => older(e.date));
   const payments = State.payments.filter(p => !p.archived && older(p.date));
-  const allDates = [...sales, ...expenses, ...payments].map(x => tsToDate(x.date)).filter(Boolean);
+  const invTx = State.invTx.filter(t => !t.archived && older(t.date || t.createdAt));
+  const projRev = State.projRev.filter(r => !r.archived && older(r.date || r.createdAt));
+  const projExp = State.projExp.filter(e => !e.archived && older(e.date || e.createdAt));
+  // Historical project records: completed/delivered projects older than retention
+  const projects = activeProjects().filter(p => ['Completed', 'Delivered'].includes(p.status) && older(p.endDate || p.targetDate || p.createdAt));
+  const allDates = [...sales, ...expenses, ...payments, ...invTx, ...projRev, ...projExp].map(x => tsToDate(x.date || x.createdAt)).filter(Boolean);
   const oldest = allDates.length ? new Date(Math.min(...allDates.map(d => d.getTime()))) : null;
-  return { sales: sales.length, expenses: expenses.length, payments: payments.length, total: sales.length + expenses.length + payments.length, oldest };
+  const total = sales.length + expenses.length + payments.length + invTx.length + projRev.length + projExp.length + projects.length;
+  return { sales: sales.length, expenses: expenses.length, payments: payments.length, invTx: invTx.length, projRev: projRev.length, projExp: projExp.length, projects: projects.length, total, oldest };
 }
 function retentionOldestDate() {
   return retentionEligibleCount().oldest;
@@ -348,7 +355,11 @@ async function runRetentionCheck() {
   const eligibleSales = activeSales().filter(s => older(s.date));
   const eligibleExpenses = activeExpenses().filter(e => older(e.date));
   const eligiblePayments = State.payments.filter(p => !p.archived && older(p.date));
-  const totalEligible = eligibleSales.length + eligibleExpenses.length + eligiblePayments.length;
+  const eligibleInvTx = State.invTx.filter(t => !t.archived && older(t.date || t.createdAt));
+  const eligibleProjRev = State.projRev.filter(r => !r.archived && older(r.date || r.createdAt));
+  const eligibleProjExp = State.projExp.filter(e => !e.archived && older(e.date || e.createdAt));
+  const eligibleProjects = activeProjects().filter(p => ['Completed', 'Delivered'].includes(p.status) && older(p.endDate || p.targetDate || p.createdAt));
+  const totalEligible = eligibleSales.length + eligibleExpenses.length + eligiblePayments.length + eligibleInvTx.length + eligibleProjRev.length + eligibleProjExp.length + eligibleProjects.length;
   try {
     if (totalEligible > 0) {
       // Retention warning notice (spec: notify admin before cleanup)
@@ -369,6 +380,10 @@ async function runRetentionCheck() {
       await process(COLL.sales, eligibleSales);
       await process(COLL.expenses, eligibleExpenses);
       await process(COLL.payments, eligiblePayments);
+      await process(COLL.invTx, eligibleInvTx);
+      await process(COLL.projRev, eligibleProjRev);
+      await process(COLL.projExp, eligibleProjExp);
+      await process(COLL.projects, eligibleProjects);
       if (ops > 0) await batch.commit();
       if (n > 0) {
         await logAudit('retention', 'archive', 'bulk', null, { count: n, mode: 'archive', cutoff: dateInputVal(cutoff) });
@@ -376,9 +391,8 @@ async function runRetentionCheck() {
       }
     } else if (ret.mode === 'delete') {
       // permanent delete — requires explicit admin activation (mode=delete)
-      const total = totalEligible;
-      if (total > 0) {
-        const ok = confirm(`PERMANENT DELETE ${total} record(s) older than ${ret.months} months?\n\nThis CANNOT be undone. Make sure you have a backup.`);
+      if (totalEligible > 0) {
+        const ok = confirm(`PERMANENT DELETE ${totalEligible} record(s) older than ${ret.months} months?\n\nThis CANNOT be undone. Make sure you have a backup.`);
         if (!ok) return;
       }
       let ops = 0; let batch = db.batch(); let n = 0;
@@ -391,6 +405,10 @@ async function runRetentionCheck() {
       await del(COLL.sales, eligibleSales);
       await del(COLL.expenses, eligibleExpenses);
       await del(COLL.payments, eligiblePayments);
+      await del(COLL.invTx, eligibleInvTx);
+      await del(COLL.projRev, eligibleProjRev);
+      await del(COLL.projExp, eligibleProjExp);
+      await del(COLL.projects, eligibleProjects);
       if (ops > 0) await batch.commit();
       if (n > 0) {
         await logAudit('retention', 'delete', 'bulk', null, { count: n, mode: 'delete', cutoff: dateInputVal(cutoff) });
@@ -409,8 +427,9 @@ function runRetentionNow() {
 
 // ---- Backup / Restore ----
 async function exportBackup() {
+  if (!guardAdmin()) return;
   const data = {
-    app: 'jb-printing-system', version: 2,
+    app: 'jb-printing-system', version: 3,
     exportedAt: new Date().toISOString(),
     settings: settingsCache || {},
     customers: State.customers, suppliers: State.suppliers,
@@ -426,6 +445,20 @@ async function exportBackup() {
   a.download = `jb-backup-${dateInputVal(new Date())}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
+  // Cloud copy: store the snapshot in Firestore too (admin-only collection)
+  try {
+    await db.collection(COLL.backups).add({
+      fileName: a.download,
+      createdAt: nowTS(),
+      counts: {
+        sales: data.sales.length, expenses: data.expenses.length, inventory: data.inventory.length,
+        inventory_transactions: data.inventory_transactions.length, projects: data.projects.length,
+        project_revenue: data.project_revenue.length, project_expenses: data.project_expenses.length,
+        payments: data.payments.length, customers: data.customers.length, suppliers: data.suppliers.length,
+        users: data.users.length
+      }
+    });
+  } catch (e) { console.warn('cloud backup copy failed', e); }
   await logAudit('backup', 'system', 'export', null, { size: data.sales.length + data.expenses.length + data.inventory.length + data.projects.length + data.customers.length });
   showToast('Backup downloaded ✓', 'success');
 }
@@ -442,6 +475,7 @@ function exportBackupExcel() {
 }
 async function restoreBackup(file) {
   if (!guardAdmin()) return;
+  if (!busyStart()) return;
   try {
     const text = await file.text();
     const data = JSON.parse(text);
@@ -450,11 +484,14 @@ async function restoreBackup(file) {
     confirmModal('⚠️ Restore Backup', `This will OVERWRITE current data with the backup.\n\n${counts}\n\nThis cannot be undone. Proceed?`, async () => {
       try {
         const clear = async (coll) => {
-          const snap = await db.collection(coll).limit(400).get();
-          if (snap.empty) return;
-          const b = db.batch();
-          snap.forEach(d => b.delete(d.ref));
-          await b.commit();
+          // loop until empty to clear >400 docs safely
+          for (let i = 0; i < 20; i++) {
+            const snap = await db.collection(coll).limit(400).get();
+            if (snap.empty) return;
+            const b = db.batch();
+            snap.forEach(d => b.delete(d.ref));
+            await b.commit();
+          }
         };
         await clear(COLL.sales); await clear(COLL.expenses); await clear(COLL.inventory); await clear(COLL.invTx);
         await clear(COLL.projects); await clear(COLL.projRev); await clear(COLL.projExp); await clear(COLL.payments);
@@ -479,14 +516,35 @@ async function restoreBackup(file) {
         await writeAll(COLL.payments, data.payments || []);
         await writeAll(COLL.customers, data.customers || []);
         await writeAll(COLL.suppliers, data.suppliers || []);
+        // settings + users (roles come from the backup; ADMIN_EMAILS safety net still
+        // force-promotes the owner on next login)
+        if (data.settings) await db.collection(COLL.settings).doc('main').set(data.settings, { merge: true });
+        if (data.users) await writeAll(COLL.users, data.users);
         await logAudit('restore', 'system', 'import', null, { counts });
         settingsCache = null; await loadSettings(true);
         await loadAllData();
-        showToast('✅ Restore complete!', 'success');
+        // Verification: compare restored counts with backup counts
+        const verify = [
+          ['Sales', State.sales.length, (data.sales || []).length],
+          ['Expenses', State.expenses.length, (data.expenses || []).length],
+          ['Inventory', State.inventory.length, (data.inventory || []).length],
+          ['Inventory Tx', State.invTx.length, (data.inventory_transactions || []).length],
+          ['Projects', State.projects.length, (data.projects || []).length],
+          ['Payments', State.payments.length, (data.payments || []).length],
+          ['Customers', State.customers.length, (data.customers || []).length],
+          ['Suppliers', State.suppliers.length, (data.suppliers || []).length]
+        ];
+        const mismatches = verify.filter(([n, a, b]) => a !== b);
+        if (mismatches.length) {
+          showToast('Restore finished but some counts differ: ' + mismatches.map(m => `${m[0]} ${m[1]}/${m[2]}`).join(', '), 'error');
+        } else {
+          showToast('✅ Restore complete and verified!', 'success');
+        }
         renderSettings();
-      } catch (e) { console.error(e); showToast('Restore failed: ' + (e.message || ''), 'error'); }
+      } catch (e) { console.error(e); showToast(friendlyError(e, 'Restore failed. Please try again.'), 'error'); }
     }, 'Restore', true);
   } catch (e) { showToast('Invalid backup file', 'error'); }
+  finally { busyEnd(); }
 }
 
 // ---- Audit log ----
