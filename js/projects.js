@@ -367,33 +367,43 @@ async function savePayment(projectId, existingPay) {
       updatedAt: nowTS()
     };
     if (existingPay) {
-      // Edit payment: update the payment record AND its linked project revenue —
-      // one payment, one revenue record (no duplication).
-      await db.collection(COLL.payments).doc(existingPay.id).update(data);
+      // Edit payment: update payment + linked revenue + project amountPaid in
+      // ONE batch — one payment = one revenue record, no duplication, and the
+      // project's amountPaid stays derived from the payment history.
+      const batch = db.batch();
+      batch.update(db.collection(COLL.payments).doc(existingPay.id), data);
       const linkedRev = State.projRev.find(r => r.paymentId === existingPay.id && r.source === 'payment');
       if (linkedRev) {
-        await db.collection(COLL.projRev).doc(linkedRev.id).update({ amount: amount, date: data.date, description: data.note || 'Payment received', updatedAt: nowTS() });
+        batch.update(db.collection(COLL.projRev).doc(linkedRev.id), { amount: amount, date: data.date, description: data.note || 'Payment received', updatedAt: nowTS() });
       } else {
-        await db.collection(COLL.projRev).add({
+        batch.set(db.collection(COLL.projRev).doc(), {
           projectId: projectId, description: data.note || 'Payment received', amount: amount,
           source: 'payment', paymentId: existingPay.id, date: data.date, archived: false, createdAt: nowTS()
         });
       }
+      batch.update(db.collection(COLL.projects).doc(projectId), { amountPaid: round2(paidSoFar + amount), updatedAt: nowTS() });
+      await batch.commit();
       await logAudit('edited', 'payment', existingPay.id, { prevAmount: existingPay.amount }, { amount });
       showToast('Payment updated ✓', 'success');
     } else {
-      const ref = await db.collection(COLL.payments).add(data);
-      // also create revenue record so project revenue includes payments
-      await db.collection(COLL.projRev).add({
+      // Create payment: payment + revenue record + project amountPaid all in
+      // ONE batch. The Firestore rule enforces payment <= remaining balance
+      // server-side using the project doc's amountPaid (pre-batch).
+      const batch = db.batch();
+      const payRef = db.collection(COLL.payments).doc();
+      batch.set(payRef, data);
+      batch.set(db.collection(COLL.projRev).doc(), {
         projectId: projectId,
         description: data.note || 'Payment received',
         amount: amount,
         source: 'payment',
-        paymentId: ref.id,
+        paymentId: payRef.id,
         date: data.date,
         archived: false,
         createdAt: nowTS()
       });
+      batch.update(db.collection(COLL.projects).doc(projectId), { amountPaid: round2(paidSoFar + amount), updatedAt: nowTS() });
+      await batch.commit();
       await logAudit('payment', 'project', projectId, null, { amount });
       showToast('Payment recorded ✓', 'success');
     }
@@ -419,6 +429,9 @@ function deletePayment(id) {
       // remove linked revenue record (one payment = one revenue line)
       const linked = State.projRev.filter(r => r.paymentId === id);
       linked.forEach(r => batch.delete(db.collection(COLL.projRev).doc(r.id)));
+      // keep project.amountPaid derived from payment history
+      const p = State.projects.find(x => x.id === pay.projectId);
+      if (p) batch.update(db.collection(COLL.projects).doc(pay.projectId), { amountPaid: round2(Math.max(0, (Number(p.amountPaid) || 0) - (Number(pay.amount) || 0))), updatedAt: nowTS() });
       await batch.commit();
       await logAudit('deleted', 'payment', id, { amount: pay.amount }, null);
       showToast('Payment deleted', 'success');
