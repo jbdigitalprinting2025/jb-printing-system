@@ -143,8 +143,25 @@ function renderUserList() {
       <div><div class="sr-lbl">${escapeHtml(u.name || u.email)} ${u.uid === currentUser.uid ? '<span class="badge green">you</span>' : ''}</div><div class="sr-sub">${escapeHtml(u.email || '')}</div></div>
       ${isAdmin() ? `<select onchange="changeUserRole('${u.uid}', this.value)" ${u.uid === currentUser.uid ? 'disabled' : ''} style="padding:6px 8px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);font-size:12px">
         ${ROLES.map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
-      </select>` : roleBadge(u.role)}
+      </select>
+      ${u.uid !== currentUser.uid ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${u.uid}')" title="Remove user access">🗑</button>` : ''}`
+      : roleBadge(u.role)}
     </div>`).join('') || '<div class="muted">No users yet</div>';
+}
+function deleteUser(uid) {
+  if (!guardAdmin()) return;
+  const u = State.users.find(x => x.uid === uid);
+  if (!u) return;
+  if (uid === currentUser.uid) { showToast("You can't delete yourself", 'error'); return; }
+  confirmDelete(`Remove user "${u.name || u.email}"? They will lose access to the system.`, async () => {
+    try {
+      await db.collection(COLL.users).doc(uid).delete();
+      await logAudit('deleted', 'user', uid, null, { email: u.email });
+      State.users = State.users.filter(x => x.uid !== uid);
+      renderSettings();
+      showToast('User removed ✓', 'success');
+    } catch (e) { showToast('Error: ' + (e.message || ''), 'error'); }
+  });
 }
 function openAddUserModal() {
   if (!guardAdmin()) return;
