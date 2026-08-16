@@ -5,6 +5,15 @@
 function activeProjects() { return State.projects.filter(p => !isArchived(p)); }
 
 // ---- Project financial helpers (single source of truth) ----
+// PROJECT COSTING MODEL:
+//  - projectExpenseTotal() = manual project expenses (labor/delivery/other)
+//    PLUS material costs recorded when inventory was consumed for the project
+//    (marker INV:<itemId>:<invTxId> — linked 1:1 to an inventory movement).
+//  - The inventory PURCHASE (restock) is NEVER added to the project: the same
+//    material would then be counted twice (₱5,000 purchase + ₱3,000 usage).
+//    Only the CONSUMED portion (₱3,000) is a project cost.
+//  - projectProfit() uses ACTUAL collected revenue minus ACTUAL costs; the
+//    estimated figures (contractPrice − estimatedCost) are shown separately.
 function projectRevenueTotal(projectId) {
   return sumBy(State.projRev.filter(r => r.projectId === projectId && !r.archived), r => Number(r.amount) || 0);
 }
@@ -146,6 +155,7 @@ function toggleProjCustomer(force) {
 }
 async function saveProject(existing) {
   if (!guardWrite()) return;
+  if (!guardOnline()) return;
   if (!busyStart()) return;
   const btn = document.getElementById('saveProjBtn');
   if (btn) btn.disabled = true;
@@ -329,6 +339,7 @@ function openPaymentModal(projectId, existingPay) {
 }
 async function savePayment(projectId, existingPay) {
   if (!guardWrite()) return;
+  if (!guardOnline()) return;
   if (!busyStart()) return;
   const btn = document.getElementById('savePayBtn');
   if (btn) btn.disabled = true;
@@ -439,6 +450,7 @@ function openProjExpenseModal(projectId) {
 }
 async function saveProjExpense() {
   if (!guardWrite()) return;
+  if (!guardOnline()) return;
   if (!busyStart()) return;
   const btn = document.getElementById('savePeBtn');
   if (btn) btn.disabled = true;
@@ -503,6 +515,7 @@ function showPmInfo() {
 }
 async function saveProjMaterial() {
   if (!guardWrite()) return;
+  if (!guardOnline()) return;
   if (!busyStart()) return;
   const btn = document.getElementById('savePmBtn');
   if (btn) btn.disabled = true;
