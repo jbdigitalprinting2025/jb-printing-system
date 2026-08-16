@@ -1,12 +1,20 @@
 rules_version = '2';
 
-// JB Digital Printing — Firestore Security Rules
+// JB Digital Printing — Firestore Security Rules (hardened Aug 2026)
 // Roles: users/{uid} -> { role: 'admin' | 'staff' | 'viewer' }
+//
+// SECURITY MODEL (server-side authority — client checks are UX only):
+//  - No user can create themselves as admin. New users docs default to 'viewer'
+//    unless the email is an owner email (bootstrap exception).
+//  - No user can change their own role. Only an admin can change roles.
+//  - Staff CANNOT read audit logs (admin only). Audit logs are APPEND-ONLY:
+//    nobody (even admin) can edit or delete them.
+//  - Inventory movements are immutable (create only). Stock can never go negative.
+//  - Financial records validate amounts at the rules level (no negative balance).
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: get a user's role
     function signedIn() {
       return request.auth != null;
     }
@@ -19,16 +27,30 @@ service cloud.firestore {
     function isStaffOrAdmin() {
       return signedIn() && (getRole() == 'staff' || getRole() == 'admin');
     }
-
-    // ---- users: anyone signed in can read; only admin can change roles ----
-    // Owner emails may set their own role to admin (bootstrap fix)
+    // Owner emails may bootstrap their own role to admin (documented exception).
     function isOwnerEmail() {
       return request.auth.token.email in ['jbdigital948@gmail.com', 'mr.sebuguero@gmail.com'];
     }
+    function validRole(r) {
+      return r in ['admin', 'staff', 'viewer'];
+    }
+    function isNum(v) {
+      return v is number;
+    }
+
+    // ---- users: read own doc or admin; create own doc as VIEWER only (role
+    // escalation blocked); self-update allowed only if role UNCHANGED; only
+    // admin can change roles or delete users ----
     match /users/{uid} {
-      allow read: if signedIn();
-      allow create: if signedIn() && request.auth.uid == uid;
-      allow update: if isAdmin() || (request.auth.uid == uid && (request.resource.data.role == resource.data.role || isOwnerEmail()));
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && (request.resource.data.role == 'viewer' || isOwnerEmail())
+        && validRole(request.resource.data.role);
+      allow update: if isAdmin()
+        || (request.auth.uid == uid
+            && (request.resource.data.role == resource.data.role || isOwnerEmail())
+            && validRole(request.resource.data.role));
       allow delete: if isAdmin();
     }
 
@@ -48,42 +70,79 @@ service cloud.firestore {
       allow create, update, delete: if isStaffOrAdmin();
     }
 
-    // ---- sales, expenses, payments: staff/admin can manage ----
+    // ---- sales: staff/admin manage; validated amounts (no negative balance) ----
     match /sales/{id} {
       allow read: if signedIn();
-      allow create, update, delete: if isStaffOrAdmin();
+      allow create: if isStaffOrAdmin()
+        && request.resource.data.total >= 0
+        && request.resource.data.amountPaid >= 0
+        && request.resource.data.amountPaid <= request.resource.data.total
+        && request.resource.data.paymentStatus in ['Paid', 'Partial', 'Unpaid']
+        && request.resource.data.transactionId is string
+        && request.resource.data.transactionId.size() > 0;
+      allow update: if isStaffOrAdmin()
+        && request.resource.data.total >= 0
+        && request.resource.data.amountPaid >= 0
+        && request.resource.data.amountPaid <= request.resource.data.total
+        && request.resource.data.paymentStatus in ['Paid', 'Partial', 'Unpaid'];
+      allow delete: if isStaffOrAdmin();
     }
+
+    // ---- expenses: staff/admin manage; amount must be positive ----
     match /expenses/{id} {
       allow read: if signedIn();
-      allow create, update, delete: if isStaffOrAdmin();
+      allow create, update: if isStaffOrAdmin()
+        && request.resource.data.amount > 0;
+      allow delete: if isStaffOrAdmin();
     }
+
+    // ---- payments: staff/admin manage; amount must be positive ----
     match /payments/{id} {
       allow read: if signedIn();
-      allow create, update, delete: if isStaffOrAdmin();
+      allow create, update: if isStaffOrAdmin()
+        && request.resource.data.amount > 0;
+      allow delete: if isStaffOrAdmin();
     }
 
-    // ---- inventory: staff/admin can manage ----
+    // ---- inventory master items: stock can never go negative ----
     match /inventory/{id} {
       allow read: if signedIn();
-      allow create, update, delete: if isStaffOrAdmin();
-    }
-    match /inventory_transactions/{id} {
-      allow read: if signedIn();
-      allow create, update, delete: if isStaffOrAdmin();
+      allow create, update: if isStaffOrAdmin()
+        && request.resource.data.currentStock >= 0
+        && request.resource.data.costPerUnit >= 0
+        && request.resource.data.sellingPrice >= 0;
+      allow delete: if isStaffOrAdmin();
     }
 
-    // ---- projects: staff/admin can manage ----
+    // ---- inventory movements: APPEND-ONLY (create only). History is immutable
+    // so stock accounting can always be reconstructed and never tampered with ----
+    match /inventory_transactions/{id} {
+      allow read: if signedIn();
+      allow create: if isStaffOrAdmin()
+        && request.resource.data.prevStock >= 0
+        && request.resource.data.newStock >= 0;
+      allow update, delete: if false;
+    }
+
+    // ---- projects: staff/admin manage ----
     match /projects/{id} {
       allow read: if signedIn();
-      allow create, update, delete: if isStaffOrAdmin();
+      allow create, update: if isStaffOrAdmin()
+        && request.resource.data.contractPrice >= 0
+        && request.resource.data.estimatedCost >= 0;
+      allow delete: if isStaffOrAdmin();
     }
     match /project_revenue/{id} {
       allow read: if signedIn();
-      allow create, update, delete: if isStaffOrAdmin();
+      allow create, update: if isStaffOrAdmin()
+        && request.resource.data.amount > 0;
+      allow delete: if isStaffOrAdmin();
     }
     match /project_expenses/{id} {
       allow read: if signedIn();
-      allow create, update, delete: if isStaffOrAdmin();
+      allow create, update: if isStaffOrAdmin()
+        && request.resource.data.amount > 0;
+      allow delete: if isStaffOrAdmin();
     }
 
     // ---- categories: read all, admin writes ----
@@ -92,11 +151,13 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // ---- audit logs: admin can read; the app appends ----
+    // ---- audit logs: ADMIN READ ONLY + append-only.
+    // Staff may CREATE their own audit events but CANNOT read the history;
+    // nobody can edit/delete audit records (tamper-resistant) ----
     match /audit_logs/{id} {
-      allow read: if isAdmin() || isStaffOrAdmin();
-      allow create: if signedIn();
-      allow update, delete: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
     }
 
     // ---- backups: admin only ----
