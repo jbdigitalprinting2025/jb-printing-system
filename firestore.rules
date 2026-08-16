@@ -1,0 +1,108 @@
+rules_version = '2';
+
+// JB Digital Printing — Firestore Security Rules
+// Roles: users/{uid} -> { role: 'admin' | 'staff' | 'viewer' }
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: get a user's role
+    function signedIn() {
+      return request.auth != null;
+    }
+    function getRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function isAdmin() {
+      return signedIn() && getRole() == 'admin';
+    }
+    function isStaffOrAdmin() {
+      return signedIn() && (getRole() == 'staff' || getRole() == 'admin');
+    }
+
+    // ---- users: anyone signed in can read; only admin can write roles ----
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == uid;
+      allow update: if isAdmin() || request.auth.uid == uid;
+      allow delete: if isAdmin();
+    }
+
+    // ---- settings: everyone signed in can read; admin writes ----
+    match /settings/{doc} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---- customers & suppliers: staff/admin can manage, viewers read ----
+    match /customers/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isStaffOrAdmin();
+    }
+    match /suppliers/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isStaffOrAdmin();
+    }
+
+    // ---- sales, expenses, payments: staff/admin can manage ----
+    match /sales/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isStaffOrAdmin();
+    }
+    match /expenses/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isStaffOrAdmin();
+    }
+    match /payments/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isStaffOrAdmin();
+    }
+
+    // ---- inventory: staff/admin can manage ----
+    match /inventory/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isStaffOrAdmin();
+    }
+    match /inventory_transactions/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isStaffOrAdmin();
+    }
+
+    // ---- projects: staff/admin can manage ----
+    match /projects/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isStaffOrAdmin();
+    }
+    match /project_revenue/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isStaffOrAdmin();
+    }
+    match /project_expenses/{id} {
+      allow read: if signedIn();
+      allow create, update, delete: if isStaffOrAdmin();
+    }
+
+    // ---- categories: read all, admin writes ----
+    match /categories/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---- audit logs: admin can read; the app appends ----
+    match /audit_logs/{id} {
+      allow read: if isAdmin() || isStaffOrAdmin();
+      allow create: if signedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // ---- backups: admin only ----
+    match /backups/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // ---- everything else: deny ----
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
