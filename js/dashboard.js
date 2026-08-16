@@ -31,11 +31,12 @@ function renderDashboard() {
   const net = totalIncome - totalExpenses;
 
   // ==== Period cards ====
+  const noData = sales.length === 0 && expenses.length === 0;
   const periodCard = `
     <div class="grid grid-3 mb-12">
-      <div class="stat-card green"><div class="lbl">Income</div><div class="val">${fmtMoneyShort(totalIncome)}</div><div class="note">${sales.length} transactions</div><div class="ico">💰</div></div>
-      <div class="stat-card red"><div class="lbl">Expenses</div><div class="val">${fmtMoneyShort(totalExpenses)}</div><div class="note">${expenses.length} transactions</div><div class="ico">💸</div></div>
-      <div class="stat-card ${net >= 0 ? 'yellow' : 'pink'}"><div class="lbl">Net Profit / Loss</div><div class="val">${fmtMoneyShort(net)}</div><div class="note">${net >= 0 ? '▲ Profit' : '▼ Loss'}</div><div class="ico">📈</div></div>
+      <div class="stat-card green"><div class="lbl">Income</div><div class="val">${fmtMoneyShort(totalIncome)}</div><div class="note">${noData ? 'No transactions yet' : sales.length + ' transactions'}</div><div class="ico">💰</div></div>
+      <div class="stat-card red"><div class="lbl">Expenses</div><div class="val">${fmtMoneyShort(totalExpenses)}</div><div class="note">${noData ? 'No expenses recorded' : expenses.length + ' transactions'}</div><div class="ico">💸</div></div>
+      <div class="stat-card ${net >= 0 ? 'yellow' : 'pink'}"><div class="lbl">Net Profit / Loss</div><div class="val">${fmtMoneyShort(net)}</div><div class="note">${noData ? 'Add your first sale to start' : (net >= 0 ? '▲ Profit' : '▼ Loss')}</div><div class="ico">📈</div></div>
     </div>`;
 
   // ==== Today / Week / Month quick stats ====
@@ -69,7 +70,7 @@ function renderDashboard() {
   const projRevenue = sumBy(activeProjs, p => projectPaidTotal(p.id));
   const projExpenses = sumBy(activeProjs, p => projectExpenseTotal(p.id));
   const projProfit = projRevenue - projExpenses;
-  const receivables = sumBy(activeSales().filter(s => (s.paymentStatus || 'Unpaid') !== 'Paid'), s => saleBalance(s)) + sumBy(activeProjects().filter(p => p.status !== 'Cancelled'), p => Math.max(0, (Number(p.contractPrice) || 0) - (Number(p.amountPaid) || 0)));
+  const receivables = round2(sumBy(activeSales().filter(s => (s.paymentStatus || 'Unpaid') !== 'Paid'), s => saleBalance(s)) + sumBy(activeProjects().filter(p => p.status !== 'Cancelled'), p => Math.max(0, projectBalance(p))));
 
   const bizStatus = `
     <div class="card"><h3>🏪 Business Status</h3>
@@ -99,13 +100,14 @@ function renderDashboard() {
   const quickActions = `
     <div class="card"><h3>⚡ Quick Actions</h3>
       <div class="flex flex-wrap">
+        ${canWrite() ? `
         <button class="btn btn-yellow btn-sm" onclick="openSaleModal()">+ Add Sale</button>
         <button class="btn btn-pink btn-sm" onclick="openExpenseModal()">+ Add Expense</button>
         <button class="btn btn-green btn-sm" onclick="openRestockModal()">+ Restock</button>
         <button class="btn btn-blue btn-sm" onclick="openInvTxModal()">+ Use Material</button>
         <button class="btn btn-dark btn-sm" onclick="openProjectModal()">+ Create Project</button>
         <button class="btn btn-outline btn-sm" onclick="openCustomerModal()">+ Add Customer</button>
-        <button class="btn btn-outline btn-sm" onclick="openSupplierModal()">+ Add Supplier</button>
+        <button class="btn btn-outline btn-sm" onclick="openSupplierModal()">+ Add Supplier</button>` : `<span class="muted">Viewer account — view only. Contact your admin to add records.</span>`}
       </div>
     </div>`;
 
