@@ -126,19 +126,24 @@ function openInvItemModal(existing) {
 }
 async function saveInvItem(existing) {
   if (!guardWrite()) return;
+  if (!busyStart()) return;
+  const btn = document.getElementById('saveInvBtn');
+  if (btn) btn.disabled = true;
+  try {
   const name = document.getElementById('invName').value.trim();
   if (!name) { showToast('Item name is required', 'error'); return; }
   const current = parseFloat(document.getElementById('invCurrent').value) || 0;
+  if (current < 0 || current > 999999999) { showToast('Invalid stock value', 'error'); return; }
   const data = {
     sku: document.getElementById('invSku').value.trim(),
     name: name,
     category: document.getElementById('invCat').value.trim(),
     unit: document.getElementById('invUnit').value,
-    currentStock: current,
-    minStock: parseFloat(document.getElementById('invMin').value) || 0,
-    maxStock: parseFloat(document.getElementById('invMax').value) || 0,
-    costPerUnit: parseFloat(document.getElementById('invCost').value) || 0,
-    sellingPrice: parseFloat(document.getElementById('invSell').value) || 0,
+    currentStock: round2(current),
+    minStock: Math.max(0, round2(parseFloat(document.getElementById('invMin').value) || 0)),
+    maxStock: Math.max(0, round2(parseFloat(document.getElementById('invMax').value) || 0)),
+    costPerUnit: round2(parseFloat(document.getElementById('invCost').value) || 0),
+    sellingPrice: round2(parseFloat(document.getElementById('invSell').value) || 0),
     supplierName: document.getElementById('invSupplier').value || '',
     location: document.getElementById('invLoc').value.trim(),
     description: document.getElementById('invDesc').value.trim(),
@@ -146,7 +151,6 @@ async function saveInvItem(existing) {
     archived: false,
     updatedAt: nowTS()
   };
-  try {
     if (existing) {
       await db.collection(COLL.inventory).doc(existing.id).update(data);
       await logAudit('edited', 'inventory_item', existing.id, null, { name });
@@ -163,7 +167,8 @@ async function saveInvItem(existing) {
     }
     closeModal();
     renderInventory(); populateInvCatFilter();
-  } catch (e) { console.error(e); showToast('Error: ' + (e.message || ''), 'error'); }
+  } catch (e) { console.error(e); showToast(friendlyError(e, 'Unable to save item. Please try again.'), 'error'); }
+  finally { busyEnd(); if (btn) btn.disabled = false; }
 }
 function editInvItem(id) {
   const it = State.inventory.find(x => x.id === id);
@@ -172,13 +177,14 @@ function editInvItem(id) {
 function deleteInvItem(id) {
   if (!guardWrite()) return;
   const it = State.inventory.find(x => x.id === id);
-  confirmDelete(`Delete inventory item "${it ? it.name : ''}"? History records will be kept.`, async () => {
+  confirmDelete(`Archive inventory item "${it ? it.name : ''}"? It will be hidden from the list but history records stay readable.`, async () => {
     try {
-      await db.collection(COLL.inventory).doc(id).delete();
+      // Soft delete (archive): keeps historical movements meaningful and allows restore
+      await db.collection(COLL.inventory).doc(id).update({ archived: true, archivedAt: nowTS() });
       await logAudit('deleted', 'inventory_item', id, null, { name: it ? it.name : '' });
-      showToast('Item deleted', 'success');
+      showToast('Item archived', 'success');
       renderInventory(); populateInvCatFilter();
-    } catch (e) { showToast('Delete failed: ' + (e.message || ''), 'error'); }
+    } catch (e) { showToast(friendlyError(e, 'Delete failed. Please try again.'), 'error'); }
   });
 }
 
@@ -246,119 +252,140 @@ function showTxItemInfo() {
   const it = State.inventory.find(x => x.id === sel.value);
   info.innerHTML = it ? `Current stock: <b>${fmtNum(it.currentStock)} ${escapeHtml(it.unit || '')}</b> · Min: ${fmtNum(it.minStock)} · Max: ${fmtNum(it.maxStock)} · Cost/unit: ${fmtMoney(it.costPerUnit)}` : 'No item selected';
 }
+// Pure stock math (testable): computes new stock + validation.
+// Never silently clamps to zero; blocks insufficient stock unless type==='adjustment'.
+class StockError extends Error {
+  constructor(msg) { super(msg); this.name = 'StockError'; this.friendly = msg; }
+}
+function computeStockUpdate(prevStock, type, qtyRaw, costPerUnit) {
+  const prev = Number(prevStock) || 0;
+  const qty = Number(qtyRaw) || 0;
+  if (!isFinite(qty) || qty === 0) return { ok: false, error: 'Enter a valid quantity' };
+  let newStock, signedQty;
+  if (type === 'restock') {
+    if (qty <= 0) return { ok: false, error: 'Restock quantity must be positive' };
+    newStock = prev + qty; signedQty = qty;
+  } else if (type === 'adjustment') {
+    // adjustment is the AUTHORIZED way to fix stock; still never below zero
+    newStock = prev + qty; signedQty = qty;
+  } else { // usage / sold / damaged / lost
+    if (qty <= 0) return { ok: false, error: 'Quantity must be positive for this type' };
+    if (qty > prev) return { ok: false, error: `Insufficient stock. Available stock: ${fmtNum(prev)}.` };
+    newStock = prev - qty; signedQty = -qty;
+  }
+  if (newStock < 0) return { ok: false, error: 'Stock cannot go below zero. Use an authorized adjustment.' };
+  newStock = round2(newStock);
+  return { ok: true, prevStock: prev, newStock, signedQty, qty };
+}
 async function saveInvTx(forcedType) {
   if (!guardWrite()) return;
-  const itemId = document.getElementById('txItem').value;
-  const item = State.inventory.find(x => x.id === itemId);
-  if (!item) { showToast('Select an item', 'error'); return; }
-  const type = forcedType || document.getElementById('txType').value;
-  const qtyRaw = parseFloat(document.getElementById('txQty').value);
-  if (isNaN(qtyRaw) || qtyRaw === 0) { showToast('Enter a valid quantity', 'error'); return; }
-  if (qtyRaw < 0 && type !== 'adjustment') { showToast('Quantity must be positive for this type', 'error'); return; }
-  const date = parseDateInput(document.getElementById('txDate').value) || new Date();
-  const notes = document.getElementById('txNotes').value.trim();
-  const projectId = document.getElementById('txProject') ? document.getElementById('txProject').value : '';
-  const prevStock = Number(item.currentStock) || 0;
-
-  let newStock;
-  let signedQty;
-  let costPerUnit = Number(item.costPerUnit) || 0;
-  if (type === 'restock') {
-    costPerUnit = parseFloat(document.getElementById('txCost').value) || costPerUnit;
-    newStock = prevStock + qtyRaw;
-    signedQty = qtyRaw;
-  } else if (type === 'adjustment') {
-    // qty is the change; if user wants absolute, we treat qty as signed change
-    newStock = Math.max(0, prevStock + qtyRaw);
-    signedQty = qtyRaw;
-    if (document.getElementById('txType') && document.getElementById('txType').value === 'adjustment' && newStock !== prevStock + qtyRaw) {
-      // clamped
-    }
-  } else {
-    if (prevStock < qtyRaw) {
-      const ok = confirm(`Stock is only ${fmtNum(prevStock)} — proceed anyway (will go to 0)?`);
-      if (!ok) return;
-    }
-    newStock = Math.max(0, prevStock - qtyRaw);
-    signedQty = -qtyRaw;
-  }
-
+  if (!busyStart()) return;
+  const btn = document.getElementById('saveTxBtn');
+  if (btn) btn.disabled = true;
   try {
-    // 1. Update item stock + totals
-    const itemUpdate = { currentStock: newStock, updatedAt: nowTS() };
-    if (type === 'restock') {
-      itemUpdate.totalPurchased = (Number(item.totalPurchased) || 0) + qtyRaw;
-      itemUpdate.costPerUnit = costPerUnit;
-      itemUpdate.lastRestockDate = firebase.firestore.Timestamp.fromDate(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0));
-    } else if (type === 'usage') { itemUpdate.totalUsed = (Number(item.totalUsed) || 0) + qtyRaw; }
-    else if (type === 'sold') { itemUpdate.totalUsed = (Number(item.totalUsed) || 0) + qtyRaw; }
-    else if (type === 'adjustment') { itemUpdate.totalAdjustments = (Number(item.totalAdjustments) || 0) + qtyRaw; }
-    await db.collection(COLL.inventory).doc(itemId).update(itemUpdate);
+    const itemId = document.getElementById('txItem').value;
+    const item = State.inventory.find(x => x.id === itemId);
+    if (!item) { showToast('Select an item', 'error'); return; }
+    const type = forcedType || document.getElementById('txType').value;
+    const qtyRaw = parseFloat(document.getElementById('txQty').value);
+    const date = parseDateInput(document.getElementById('txDate').value) || new Date();
+    const notes = document.getElementById('txNotes').value.trim();
+    const projectId = document.getElementById('txProject') ? document.getElementById('txProject').value : '';
+    const asExpense = document.getElementById('txAsExpense') ? document.getElementById('txAsExpense').checked : false;
+    let costPerUnit = Number(item.costPerUnit) || 0;
+    if (type === 'restock') costPerUnit = round2(parseFloat(document.getElementById('txCost').value)) || costPerUnit;
+    const projectName = projectId ? (() => { const p = State.projects.find(x => x.id === projectId); return p ? p.name : ''; })() : '';
+    if (qtyRaw > 999999999 || costPerUnit > 999999999) { showToast('Amount too large', 'error'); return; }
 
-    // 2. Record history
-    const txData = {
-      itemId: itemId,
-      itemName: item.name,
-      type: type,
-      qty: qtyRaw,
-      signedQty: signedQty,
-      prevStock: prevStock,
-      newStock: newStock,
-      projectId: projectId || '',
-      notes: notes,
-      userId: currentUser.uid,
-      userName: currentUserDoc ? (currentUserDoc.name || currentUser.email) : '',
-      date: firebase.firestore.Timestamp.fromDate(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0)),
-      createdAt: nowTS()
-    };
-    const txRef = await db.collection(COLL.invTx).add(txData);
-    await logAudit(type, 'inventory_tx', txRef.id, { prevStock }, { newStock, qty: qtyRaw });
+    // ATOMIC transaction: read stock + validate + update + record movement — all-or-nothing.
+    // Two devices updating the same item are serialized by Firestore (no lost updates).
+    const result = await db.runTransaction(async (t) => {
+      const itemRef = db.collection(COLL.inventory).doc(itemId);
+      const snap = await t.get(itemRef);
+      if (!snap.exists) throw new StockError('Item no longer exists. Refresh and try again.');
+      const liveItem = snap.data();
+      const calc = computeStockUpdate(liveItem.currentStock, type, qtyRaw, costPerUnit);
+      if (!calc.ok) throw new StockError(calc.error);
 
-    // 3. Restock -> optional expense
+      const itemUpdate = { currentStock: calc.newStock, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+      if (type === 'restock') {
+        itemUpdate.totalPurchased = (Number(liveItem.totalPurchased) || 0) + calc.qty;
+        itemUpdate.costPerUnit = costPerUnit;
+        itemUpdate.lastRestockDate = firebase.firestore.Timestamp.fromDate(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0));
+      } else if (type === 'usage' || type === 'sold') { itemUpdate.totalUsed = (Number(liveItem.totalUsed) || 0) + calc.qty; }
+      else if (type === 'adjustment') { itemUpdate.totalAdjustments = (Number(liveItem.totalAdjustments) || 0) + calc.qty; }
+      t.update(itemRef, itemUpdate);
+
+      // movement record — unique id reserved inside the transaction
+      const txRef = db.collection(COLL.invTx).doc();
+      const txData = {
+        itemId: itemId,
+        itemName: item.name,
+        type: type,
+        qty: calc.qty,
+        signedQty: calc.signedQty,
+        prevStock: calc.prevStock,
+        newStock: calc.newStock,
+        projectId: projectId || '',
+        projectName: projectName,
+        unit: item.unit || '',
+        costPerUnit: costPerUnit,
+        totalCost: round2(calc.qty * costPerUnit),
+        notes: notes,
+        userId: currentUser.uid,
+        userName: currentUserDoc ? (currentUserDoc.name || currentUser.email) : '',
+        date: firebase.firestore.Timestamp.fromDate(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0)),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      };
+      t.set(txRef, txData);
+      return { txId: txRef.id, calc, costPerUnit };
+    });
+
+    await logAudit(type, 'inventory_tx', result.txId, { prevStock: result.calc.prevStock }, { newStock: result.calc.newStock, qty: result.calc.qty });
+
+    // 3. Restock -> optional expense, linked by UNIQUE inventoryTransactionId.
+    //    No time-window dedup: two legitimate restocks on the same day both record.
     if (type === 'restock') {
-      const asExpense = document.getElementById('txAsExpense') ? document.getElementById('txAsExpense').checked : false;
-      if (asExpense && costPerUnit > 0) {
-        const totalCost = qtyRaw * costPerUnit;
-        // avoid duplicates: check recent restock expense for same item+date
-        const dupe = activeExpenses().find(e =>
-          e.category === 'Materials' &&
-          e.notes && e.notes.includes(`RESTOCK:${itemId}`) &&
-          tsToDate(e.date) && Math.abs(tsToDate(e.date).getTime() - date.getTime()) < 86400000
-        );
-        if (!dupe) {
-          await db.collection(COLL.expenses).add({
-            expenseId: `E-${Date.now().toString(36).toUpperCase()}`,
+      if (asExpense && result.costPerUnit > 0) {
+        const totalCost = round2(result.calc.qty * result.costPerUnit);
+        const already = State.expenses.find(e => e.inventoryTransactionId === result.txId);
+        if (!already) {
+          const expenseRef = await db.collection(COLL.expenses).add({
+            expenseId: uniqueBizId('E', date, State.expenses.map(e => e.expenseId).filter(Boolean)),
             date: firebase.firestore.Timestamp.fromDate(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0)),
             category: 'Materials',
-            description: `Restock: ${item.name} (${fmtNum(qtyRaw)} ${item.unit || ''})`,
+            description: `Restock: ${item.name} (${fmtNum(result.calc.qty)} ${item.unit || ''})`,
             amount: totalCost,
             paymentMethod: 'Cash',
             supplierName: item.supplierName || '',
             projectId: projectId || '',
             receiptNo: '',
-            notes: `RESTOCK:${itemId}`,
+            notes: `RESTOCK:${itemId}:${result.txId}`,
+            inventoryTransactionId: result.txId,
             archived: false,
             createdAt: nowTS()
           });
+          await logAudit('restock_expense', 'expense', expenseRef.id, null, { amount: totalCost });
           showToast(`Expense recorded: ${fmtMoney(totalCost)}`, 'success');
         }
       }
     }
 
-    // 4. Usage -> project expense (material cost) if project linked
-    if ((type === 'usage' || type === 'sold') && projectId && costPerUnit > 0) {
-      const totalCost = qtyRaw * costPerUnit;
-      // avoid double count: check existing project expense with same marker
-      const dupe = State.projExp.find(pe => pe.projectId === projectId && pe.marker === `INV:${itemId}:${txRef.id}`);
+    // 4. Usage -> project expense (material cost) if project linked — dedup by unique marker
+    if ((type === 'usage' || type === 'sold') && projectId && result.costPerUnit > 0) {
+      const totalCost = round2(result.calc.qty * result.costPerUnit);
+      const marker = `INV:${itemId}:${result.txId}`;
+      const dupe = State.projExp.find(pe => pe.projectId === projectId && pe.marker === marker);
       if (!dupe) {
         await db.collection(COLL.projExp).add({
           projectId: projectId,
           category: 'Material',
-          description: `Material: ${item.name} (${fmtNum(qtyRaw)} ${item.unit || ''})`,
+          description: `Material: ${item.name} (${fmtNum(result.calc.qty)} ${item.unit || ''})`,
           amount: totalCost,
           date: firebase.firestore.Timestamp.fromDate(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0)),
-          marker: `INV:${itemId}:${txRef.id}`,
-          inventoryTxId: txRef.id,
+          marker: marker,
+          inventoryTxId: result.txId,
+          archived: false,
           createdAt: nowTS()
         });
       }
@@ -367,7 +394,14 @@ async function saveInvTx(forcedType) {
     closeModal();
     renderInventory(); renderInvHistory();
     showToast('Stock updated ✓', 'success');
-  } catch (e) { console.error(e); showToast('Error: ' + (e.message || ''), 'error'); }
+  } catch (e) {
+    console.error(e);
+    const msg = (e && e.friendly) ? e.friendly : friendlyError(e, 'Unable to update inventory. Please try again.');
+    showToast(msg, 'error');
+  } finally {
+    busyEnd();
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ---- Inventory history ----
@@ -377,7 +411,7 @@ function renderInvHistory() {
   const txs = [...State.invTx].sort((a, b) => (tsToDate(b.createdAt) || 0) - (tsToDate(a.createdAt) || 0)).slice(0, 50);
   if (!txs.length) { el.innerHTML = emptyState('⏱', 'No inventory movements yet'); return; }
   const typeLabel = { restock: ['+ Restock', 'green'], usage: ['− Usage', 'blue'], sold: ['− Sold', 'blue'], damaged: ['− Damaged', 'red'], lost: ['− Lost', 'red'], adjustment: ['± Adjustment', 'orange'] };
-  const projName = id => { const p = State.projects.find(x => x.id === id); return p ? p.name : ''; };
+  const projName = t => { if (t.projectName) return t.projectName; const p = State.projects.find(x => x.id === t.projectId); return p ? p.name : ''; };
   el.innerHTML = `<div class="tbl-wrap"><table class="tbl" style="min-width:520px">
     <thead><tr><th>Date</th><th>Item</th><th>Type</th><th class="num">Qty</th><th class="num">Before</th><th class="num">After</th><th>User</th><th>Project</th></tr></thead>
     <tbody>${txs.map(t => {
@@ -390,7 +424,7 @@ function renderInvHistory() {
         <td class="num">${fmtNum(t.prevStock)}</td>
         <td class="num"><b>${fmtNum(t.newStock)}</b></td>
         <td>${escapeHtml(t.userName || '—')}</td>
-        <td>${t.projectId ? escapeHtml(projName(t.projectId) || '—') : '—'}</td>
+        <td>${t.projectId ? escapeHtml(projName(t) || '—') : '—'}</td>
       </tr>`;
     }).join('')}
     </tbody></table></div>`;
