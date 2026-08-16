@@ -21,7 +21,7 @@ function renderSales() {
     if (from && (!d || d.getTime() < from.getTime())) return false;
     if (toEnd && (!d || d.getTime() > toEnd.getTime())) return false;
     if (q) {
-      const hay = [s.transactionId, s.customerName, s.category, s.notes, (s.items || []).map(i => i.product || i.name).join(' ')].join(' ').toLowerCase();
+      const hay = [s.transactionId, s.customerName, s.category, s.notes, (Array.isArray(s.items) ? s.items : []).map(i => i.product || i.name).join(' ')].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -43,7 +43,7 @@ function renderSales() {
 
   const canEdit = canWrite();
   const rows = pageItems.map(s => {
-    const items = (s.items || []).map(i => `${i.product || i.name || ''}${i.qty ? ' ×' + i.qty : ''}`).join(', ') || s.category || 'Sale';
+    const items = (Array.isArray(s.items) ? s.items : []).map(i => `${i.product || i.name || ''}${i.qty ? ' ×' + i.qty : ''}`).join(', ') || s.category || 'Sale';
     const cust = s.customerName || 'Walk-in';
     return `<tr>
       <td>${escapeHtml(s.transactionId || s.id.slice(0, 8))}</td>
@@ -61,7 +61,7 @@ function renderSales() {
   }).join('');
 
   const mcards = pageItems.map(s => {
-    const items = (s.items || []).map(i => `${i.product || i.name || ''}${i.qty ? ' ×' + i.qty : ''}`).join(', ') || s.category || 'Sale';
+    const items = (Array.isArray(s.items) ? s.items : []).map(i => `${i.product || i.name || ''}${i.qty ? ' ×' + i.qty : ''}`).join(', ') || s.category || 'Sale';
     return `<div class="mcard income">
       <div class="m-top"><span class="m-title">${escapeHtml(s.customerName || 'Walk-in')}</span>${paymentBadge(s.paymentStatus || 'Unpaid')}</div>
       <div class="m-sub">${escapeHtml(items)} · ${escapeHtml(fmtDate(s.date))}</div>
@@ -336,7 +336,7 @@ function exportSalesCSV() {
   const list = activeSales().sort((a, b) => (tsToDate(b.date) || 0) - (tsToDate(a.date) || 0));
   const rows = [['Transaction ID', 'Date', 'Customer', 'Items', 'Category', 'Qty', 'Unit Price', 'Total', 'Payment Method', 'Payment Status', 'Amount Paid', 'Balance', 'Notes']];
   list.forEach(s => {
-    const items = s.items && s.items.length ? s.items : [{ product: s.category, qty: 1, unitPrice: saleTotal(s) }];
+    const items = (Array.isArray(s.items) && s.items.length) ? s.items : [{ product: s.category, qty: 1, unitPrice: saleTotal(s) }];
     items.forEach(it => rows.push([s.transactionId, fmtDate(s.date), s.customerName || '', it.product || '', it.category || s.category || '', it.qty, it.unitPrice, (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), s.paymentMethod || '', s.paymentStatus || '', s.paymentStatus === 'Partial' ? s.amountPaid : (s.paymentStatus === 'Paid' ? saleTotal(s) : 0), saleBalance(s), s.notes || '']));
   });
   downloadCSV('jb-sales.csv', rows);
