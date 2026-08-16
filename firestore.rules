@@ -174,9 +174,12 @@ service cloud.firestore {
     }
 
     // ---- inventory movements: APPEND-ONLY + RELATIONSHIP-VALIDATED.
-    // prevStock + signedQty == newStock, and both must match the REAL item doc
-    // before/after the write (get/getAfter). This blocks fake history and any
-    // stock change that does not come with a matching movement record. ----
+    // newStock must equal prevStock + signedQty AND the item's currentStock
+    // AFTER this batch (getAfter). NOTE: a get() PRE-check on prevStock races
+    // with concurrent transactions (one device gets hard-denied instead of the
+    // transaction retrying), so it is intentionally omitted — the SDK's
+    // transaction conflict detection still prevents lost updates, and getAfter
+    // ties every movement to an actual item stock change. ----
     match /inventory_transactions/{id} {
       allow read: if isActiveUser();
       allow create: if isActiveStaffOrAdmin()
@@ -193,8 +196,6 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/inventory/$(request.resource.data.itemId))
         && request.resource.data.newStock
            == request.resource.data.prevStock + request.resource.data.signedQty
-        && request.resource.data.prevStock
-           == get(/databases/$(database)/documents/inventory/$(request.resource.data.itemId)).data.currentStock
         && request.resource.data.newStock
            == getAfter(/databases/$(database)/documents/inventory/$(request.resource.data.itemId)).data.currentStock;
       allow update, delete: if false;
