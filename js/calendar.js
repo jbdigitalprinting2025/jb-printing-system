@@ -249,7 +249,7 @@ function dayTxns(dt) {
   activeSales().forEach(s => {
     const x = tsToDate(s.date);
     if (x && x.getFullYear() === dt.getFullYear() && x.getMonth() === dt.getMonth() && x.getDate() === dt.getDate()) {
-      const items = (s.items || []).map(it => it.product || it.name || '').filter(Boolean).join(', ') || s.category || 'Sale';
+      const items = (Array.isArray(s.items) ? s.items : []).map(it => it.product || it.name || '').filter(Boolean).join(', ') || s.category || 'Sale';
       txs.push({ type: 'income', id: s.id, title: items, sub: `${s.transactionId || 'SALE'} · ${s.customerName || 'Walk-in'} · ${s.paymentStatus || 'Unpaid'}`, amount: saleTotal(s), del: 'sale' });
     }
   });
