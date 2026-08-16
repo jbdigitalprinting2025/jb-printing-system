@@ -2,6 +2,34 @@
 // UI HELPERS — formatting, modal, toast, shared render utils
 // ============================================================
 const _fmtCache = new Map();
+const PH_TZ = 'Asia/Manila';
+
+// Currency-safe rounding: avoids 999.999999 style floats
+function round2(n) {
+  const v = Number(n);
+  if (!isFinite(v)) return 0;
+  return Math.round((v + Number.EPSILON) * 100) / 100;
+}
+function round4(n) {
+  const v = Number(n);
+  if (!isFinite(v)) return 0;
+  return Math.round((v + Number.EPSILON) * 10000) / 10000;
+}
+
+// Map common Firebase errors to friendly messages (never expose raw errors)
+function friendlyError(e, fallback) {
+  const code = (e && e.code) || (e && e.message) || '';
+  if (code.includes('permission-denied') || code.includes('PERMISSION_DENIED')) return 'Permission denied. Contact your admin.';
+  if (code.includes('unavailable') || code.includes('network') || code.includes('NETWORK')) return 'Network connection unavailable. Check your internet and try again.';
+  if (code.includes('not-found') || code.includes('NOT_FOUND')) return 'Record no longer exists. Refresh and try again.';
+  if (code.includes('already-exists')) return 'A record with this ID already exists.';
+  if (code.includes('deadline-exceeded') || code.includes('DEADLINE_EXCEEDED')) return 'The request timed out. Please try again.';
+  if (code.includes('invalid-argument') || code.includes('INVALID_ARGUMENT')) return 'Invalid input. Please check your entries.';
+  if (code.includes('resource-exhausted')) return 'Too many requests. Please wait a moment.';
+  if (code.includes('aborted') || code.includes('ABORTED')) return 'The operation was interrupted by another update. Please try again.';
+  if (code.includes('out-of-range') || code.includes('OUT_OF_RANGE')) return 'Insufficient stock or invalid quantity.';
+  return fallback || (e && e.message ? 'Operation failed. Please try again.' : 'Operation failed. Please try again.');
+}
 
 // Format money: ₱1,250.00
 function fmtMoney(n) {
@@ -19,20 +47,27 @@ function fmtDate(d) {
   if (!d) return '—';
   const dt = (d instanceof Date) ? d : new Date(d);
   if (isNaN(dt)) return '—';
-  return dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  try { return dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: PH_TZ }); }
+  catch (e) { return dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); }
 }
 function fmtDateShort(d) {
   if (!d) return '—';
   const dt = (d instanceof Date) ? d : new Date(d);
   if (isNaN(dt)) return '—';
-  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  try { return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: PH_TZ }); }
+  catch (e) { return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
 }
 function fmtDateTime(d) {
   if (!d) return '—';
   const dt = (d instanceof Date) ? d : new Date(d);
   if (isNaN(dt)) return '—';
-  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
-         dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  try {
+    return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: PH_TZ }) + ' ' +
+           dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: PH_TZ });
+  } catch (e) {
+    return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+           dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
 }
 function fmtNum(n) {
   const v = Number(n) || 0;
