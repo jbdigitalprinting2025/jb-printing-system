@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>JB Digital Printing — Business System</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖨️</text></svg>">
+<style>
+:root{
+  --yellow:#FFC107; --yellow-dark:#E6A800; --yellow-light:#FFF8E1;
+  --dark:#1A1A1A; --gray-800:#2D2D2D; --gray-700:#424242; --gray-600:#616161;
+  --gray-500:#9E9E9E; --gray-400:#BDBDBD; --gray-300:#E0E0E0; --gray-200:#F0F0F0; --gray-100:#FAFAFA;
+  --white:#FFFFFF; --pink:#E94560; --pink-dark:#C9184A;
+  --green:#2E7D32; --green-bg:#E8F5E9; --red:#C62828; --red-bg:#FFEBEE;
+  --blue:#1565C0; --blue-bg:#E3F2FD; --orange:#EF6C00; --orange-bg:#FFF3E0;
+  --radius-lg:16px; --radius-md:10px; --radius-sm:6px;
+  --shadow:0 2px 8px rgba(0,0,0,.08); --shadow-lg:0 6px 24px rgba(0,0,0,.15);
+  --font:'Segoe UI',system-ui,-apple-system,sans-serif;
+  --sidebar-w:250px; --topbar-h:56px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{font-family:var(--font);background:var(--gray-200);color:var(--dark);font-size:14px;line-height:1.45}
+input,select,textarea,button{font-family:inherit;font-size:14px}
+button{cursor:pointer}
+a{color:var(--blue);text-decoration:none}
+
+/* ====== LOGIN SCREEN ====== */
+#loginScreen{position:fixed;inset:0;background:linear-gradient(135deg,var(--dark) 0%,var(--gray-800) 60%,#3a2e00 100%);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px}
+#loginScreen.hidden{display:none}
+.login-card{background:var(--white);border-radius:var(--radius-lg);padding:32px 28px;width:100%;max-width:400px;box-shadow:var(--shadow-lg);text-align:center}
+.login-logo{width:76px;height:76px;border-radius:18px;background:linear-gradient(135deg,var(--yellow),var(--yellow-dark));display:flex;align-items:center;justify-content:center;font-size:38px;margin:0 auto 14px;box-shadow:var(--shadow)}
+.login-card h1{font-size:22px;font-weight:800;letter-spacing:-.3px}
+.login-card .sub{color:var(--gray-500);font-size:12px;margin:4px 0 20px}
+.login-card .sub b{color:var(--gray-700)}
+.field{text-align:left;margin-bottom:12px}
+.field label{display:block;font-size:12px;font-weight:700;color:var(--gray-700);margin-bottom:4px}
+.field input,.field select,.field textarea{width:100%;padding:11px 12px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);background:var(--white);outline:none;transition:border-color .15s}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--yellow-dark)}
+.field textarea{resize:vertical;min-height:64px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:none;border-radius:var(--radius-sm);padding:11px 18px;font-weight:700;font-size:14px;transition:filter .15s,transform .1s;width:100%}
+.btn:active{transform:scale(.98)}
+.btn-yellow{background:var(--yellow);color:var(--dark)}
+.btn-yellow:hover{filter:brightness(1.05)}
+.btn-dark{background:var(--dark);color:var(--white)}
+.btn-pink{background:var(--pink);color:var(--white)}
+.btn-green{background:var(--green);color:var(--white)}
+.btn-blue{background:var(--blue);color:var(--white)}
+.btn-gray{background:var(--gray-300);color:var(--gray-800)}
+.btn-outline{background:var(--white);border:1.5px solid var(--gray-300);color:var(--gray-700)}
+.btn-danger{background:var(--red-bg);color:var(--red);border:1.5px solid #ffcdd2}
+.btn-sm{padding:7px 12px;font-size:12.5px;width:auto;border-radius:var(--radius-sm)}
+.btn-icon{padding:8px;width:auto}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+#loginError{color:var(--pink);font-size:12.5px;margin-top:10px;min-height:18px;font-weight:600}
+.login-foot{margin-top:16px;font-size:11.5px;color:var(--gray-500)}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,0,0,.2);border-top-color:var(--dark);border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ====== APP LAYOUT ====== */
+#appShell{display:none;min-height:100vh}
+#appShell.visible{display:flex;flex-direction:column}
+.topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:var(--dark);color:var(--white);display:flex;align-items:center;padding:0 14px;z-index:100;gap:10px}
+.topbar .menu-btn{background:none;border:none;color:var(--white);font-size:22px;padding:6px;border-radius:6px}
+.topbar .menu-btn:hover{background:rgba(255,255,255,.1)}
+.topbar .brand{display:flex;align-items:center;gap:8px;font-weight:800;font-size:15px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar .brand .logo-mini{width:30px;height:30px;border-radius:8px;background:var(--yellow);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.topbar .user-chip{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.12);padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;max-width:130px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.role-badge{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:2px 6px;border-radius:10px;background:var(--yellow);color:var(--dark)}
+.role-badge.staff{background:var(--blue);color:var(--white)}
+.role-badge.viewer{background:var(--gray-500);color:var(--white)}
+
+.sidebar{position:fixed;top:var(--topbar-h);bottom:0;left:0;width:var(--sidebar-w);background:var(--white);border-right:1px solid var(--gray-300);transform:translateX(-100%);transition:transform .22s ease;z-index:90;overflow-y:auto;padding:10px 0 80px}
+.sidebar.open{transform:translateX(0)}
+.sidebar .nav-item{display:flex;align-items:center;gap:10px;padding:11px 16px;color:var(--gray-700);font-weight:600;font-size:13.5px;border-left:3px solid transparent;cursor:pointer}
+.sidebar .nav-item:hover{background:var(--gray-100)}
+.sidebar .nav-item.active{background:var(--yellow-light);border-left-color:var(--yellow);color:var(--dark)}
+.sidebar .nav-item .ico{font-size:17px;width:22px;text-align:center}
+.sidebar .nav-sep{border-top:1px solid var(--gray-200);margin:8px 14px}
+
+.main{padding:calc(var(--topbar-h) + 14px) 14px 90px;width:100%;max-width:1200px;margin:0 auto;flex:1}
+.page{display:none}
+.page.active{display:block;animation:fadeIn .18s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.page-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.page-head h2{font-size:19px;font-weight:800;letter-spacing:-.3px}
+.page-head .actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* bottom nav (mobile) */
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;background:var(--white);border-top:1px solid var(--gray-300);display:flex;z-index:95;padding-bottom:env(safe-area-inset-bottom)}
+.bottom-nav .bn-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 2px 6px;font-size:10px;font-weight:600;color:var(--gray-500);border:none;background:none}
+.bottom-nav .bn-item .ico{font-size:19px}
+.bottom-nav .bn-item.active{color:var(--dark)}
+.bottom-nav .bn-item.active .ico{transform:translateY(-1px)}
+.bottom-nav .bn-add{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 2px;border:none;background:none}
+.bottom-nav .bn-add .fab{width:46px;height:46px;border-radius:50%;background:var(--yellow);color:var(--dark);display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;box-shadow:0 4px 14px rgba(255,193,7,.5);margin-top:-20px;border:3px solid var(--white)}
+.bottom-nav .bn-add .lbl{font-size:10px;font-weight:700;color:var(--gray-600);margin-top:1px}
+
+/* ====== CARDS & GRID ====== */
+.card{background:var(--white);border-radius:var(--radius-lg);box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
+.card h3{font-size:14.5px;font-weight:800;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.card h3 .sub{font-weight:500;color:var(--gray-500);font-size:11.5px;margin-left:auto}
+.grid{display:grid;gap:12px}
+.grid-2{grid-template-columns:repeat(2,1fr)}
+.grid-3{grid-template-columns:repeat(3,1fr)}
+.grid-4{grid-template-columns:repeat(4,1fr)}
+.grid-6{grid-template-columns:repeat(6,1fr)}
+.stat-card{background:var(--white);border-radius:var(--radius-lg);box-shadow:var(--shadow);padding:14px;position:relative;overflow:hidden}
+.stat-card .lbl{font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+.stat-card .val{font-size:19px;font-weight:800;letter-spacing:-.4px;white-space:nowrap}
+.stat-card .val.sm{font-size:15px}
+.stat-card .ico{position:absolute;right:12px;top:12px;font-size:22px;opacity:.18}
+.stat-card .note{font-size:10.5px;color:var(--gray-500);margin-top:3px}
+.stat-card.green .val{color:var(--green)} .stat-card.green{background:linear-gradient(135deg,var(--white),var(--green-bg))}
+.stat-card.red .val{color:var(--red)} .stat-card.red{background:linear-gradient(135deg,var(--white),var(--red-bg))}
+.stat-card.yellow .val{color:var(--yellow-dark)} .stat-card.yellow{background:linear-gradient(135deg,var(--white),var(--yellow-light))}
+.stat-card.blue .val{color:var(--blue)} .stat-card.blue{background:linear-gradient(135deg,var(--white),var(--blue-bg))}
+.stat-card.orange .val{color:var(--orange)} .stat-card.orange{background:linear-gradient(135deg,var(--white),var(--orange-bg))}
+.stat-card.dark .val{color:var(--gray-800)} .stat-card.dark{background:linear-gradient(135deg,var(--white),var(--gray-200))}
+
+/* ====== TABLES ====== */
+.tbl-wrap{overflow-x:auto;border-radius:var(--radius-md);border:1px solid var(--gray-300);background:var(--white)}
+table.tbl{width:100%;border-collapse:collapse;min-width:560px}
+table.tbl th{background:var(--gray-100);color:var(--gray-700);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.3px;padding:10px 12px;text-align:left;border-bottom:1px solid var(--gray-300);position:sticky;top:0;white-space:nowrap}
+table.tbl td{padding:10px 12px;border-bottom:1px solid var(--gray-200);font-size:13px;vertical-align:middle;white-space:nowrap}
+table.tbl tr:last-child td{border-bottom:none}
+table.tbl tr:hover td{background:var(--gray-100)}
+table.tbl td.num,table.tbl th.num{text-align:right;font-variant-numeric:tabular-nums}
+table.tbl td.pos{color:var(--green);font-weight:700}
+table.tbl td.neg{color:var(--red);font-weight:700}
+.mobile-cards{display:none}
+@media(max-width:640px){
+  .desktop-table{display:none}
+  .mobile-cards{display:block}
+  .mcard{background:var(--white);border-radius:var(--radius-md);box-shadow:var(--shadow);padding:12px;margin-bottom:10px;border-left:4px solid var(--gray-300)}
+  .mcard.income{border-left-color:var(--green)}
+  .mcard.expense{border-left-color:var(--red)}
+  .mcard .m-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .mcard .m-title{font-weight:700;font-size:13.5px}
+  .mcard .m-sub{font-size:11.5px;color:var(--gray-500)}
+  .mcard .m-amt{font-size:16px;font-weight:800}
+  .mcard .m-actions{display:flex;gap:6px;margin-top:8px;justify-content:flex-end}
+}
+
+/* ====== BADGES ====== */
+.badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.3px}
+.badge.green{background:var(--green-bg);color:var(--green)}
+.badge.red{background:var(--red-bg);color:var(--red)}
+.badge.orange{background:var(--orange-bg);color:var(--orange)}
+.badge.blue{background:var(--blue-bg);color:var(--blue)}
+.badge.gray{background:var(--gray-200);color:var(--gray-600)}
+.badge.yellow{background:var(--yellow-light);color:var(--yellow-dark)}
+.badge.pink{background:#fce4ec;color:var(--pink)}
+
+/* ====== CALENDAR ====== */
+.cal-nav{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.cal-nav .month-name{font-size:16px;font-weight:800;flex:1;text-align:center;min-width:140px}
+.cal-nav button{border:1px solid var(--gray-300);background:var(--white);border-radius:var(--radius-sm);padding:7px 10px;font-weight:700;font-size:12.5px}
+.cal-nav select{border:1px solid var(--gray-300);border-radius:var(--radius-sm);padding:7px 8px;background:var(--white);font-size:12.5px;font-weight:600}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.cal-dow{text-align:center;font-size:10.5px;font-weight:800;color:var(--gray-500);text-transform:uppercase;padding:4px 0}
+.cal-cell{min-height:74px;background:var(--white);border-radius:var(--radius-sm);border:1px solid var(--gray-300);padding:4px 5px;cursor:pointer;position:relative;transition:box-shadow .12s;overflow:hidden;display:flex;flex-direction:column}
+.cal-cell:hover{border-color:var(--yellow-dark);box-shadow:var(--shadow)}
+.cal-cell.today{border:2px solid var(--yellow-dark)}
+.cal-cell.other-month{opacity:.35}
+.cal-cell.selected{background:var(--yellow-light);border-color:var(--yellow-dark)}
+.cal-cell .dnum{font-size:11.5px;font-weight:800;margin-bottom:2px}
+.cal-cell .c-income{font-size:9.5px;color:var(--green);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cal-cell .c-expense{font-size:9.5px;color:var(--red);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cal-cell .c-net{font-size:9.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cal-cell .c-count{position:absolute;top:3px;right:5px;font-size:9px;font-weight:800;color:var(--gray-500);background:var(--gray-200);border-radius:8px;padding:0 5px}
+.cal-cell.no-act{background:var(--gray-100)}
+.cal-legend{display:flex;gap:12px;font-size:11px;color:var(--gray-600);margin-top:10px;flex-wrap:wrap}
+.cal-legend span{display:flex;align-items:center;gap:4px}
+.cal-legend .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.week-grid{display:grid;grid-template-columns:1fr;gap:6px}
+.week-day{display:grid;grid-template-columns:70px 1fr;background:var(--white);border-radius:var(--radius-md);border:1px solid var(--gray-300);overflow:hidden;cursor:pointer}
+.week-day .wd-date{background:var(--gray-100);padding:10px 8px;text-align:center;font-weight:800;font-size:12px;display:flex;flex-direction:column;justify-content:center}
+.week-day .wd-date .dow{font-size:10px;color:var(--gray-500);font-weight:700}
+.week-day .wd-body{padding:8px 10px;display:flex;flex-direction:column;gap:3px}
+.week-day .wd-body .r1{display:flex;gap:14px;font-size:12px;flex-wrap:wrap}
+.day-list{display:flex;flex-direction:column;gap:6px}
+.day-list .dl-row{display:flex;justify-content:space-between;align-items:center;background:var(--white);border:1px solid var(--gray-300);border-radius:var(--radius-md);padding:10px 12px;font-size:13px;gap:8px}
+.day-list .dl-row .dl-date{font-weight:700;font-size:12px;color:var(--gray-600);min-width:90px}
+.cal-view-tabs{display:flex;background:var(--gray-300);border-radius:10px;padding:3px;margin-bottom:12px;width:fit-content}
+.cal-view-tabs button{border:none;background:none;padding:7px 14px;font-size:12.5px;font-weight:700;border-radius:8px;color:var(--gray-600)}
+.cal-view-tabs button.active{background:var(--white);color:var(--dark);box-shadow:var(--shadow)}
+
+/* ====== DAY DETAIL PANEL ====== */
+#dayDetail{position:fixed;top:0;right:0;bottom:0;width:100%;max-width:430px;background:var(--white);z-index:200;transform:translateX(100%);transition:transform .24s ease;box-shadow:var(--shadow-lg);overflow-y:auto}
+#dayDetail.open{transform:translateX(0)}
+.dd-head{background:var(--dark);color:var(--white);padding:18px 16px;position:sticky;top:0;z-index:2}
+.dd-head .dd-close{position:absolute;top:14px;right:14px;background:rgba(255,255,255,.15);border:none;color:var(--white);width:32px;height:32px;border-radius:50%;font-size:16px}
+.dd-head h3{font-size:17px;font-weight:800}
+.dd-head .dd-sub{font-size:12px;color:rgba(255,255,255,.7)}
+.dd-stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;padding:14px 16px;border-bottom:1px solid var(--gray-200)}
+.dd-stats .ds{background:var(--gray-100);border-radius:var(--radius-md);padding:10px}
+.ds .ds-lbl{font-size:10.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase}
+.ds .ds-val{font-size:16px;font-weight:800}
+.ds.income .ds-val{color:var(--green)} .ds.expense .ds-val{color:var(--red)} .ds.net .ds-val{color:var(--gray-800)} .ds.count .ds-val{color:var(--blue)}
+.dd-quick{display:flex;gap:8px;padding:12px 16px}
+.dd-quick .btn{width:50%}
+.dd-txns{padding:0 16px 20px}
+.dd-txns h4{font-size:12.5px;font-weight:800;color:var(--gray-500);text-transform:uppercase;margin:10px 0 8px}
+.dd-txn{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--gray-200);align-items:flex-start}
+.dd-txn .dt-ico{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.dd-txn.income .dt-ico{background:var(--green-bg)} .dd-txn.expense .dt-ico{background:var(--red-bg)}
+.dd-txn .dt-info{flex:1;min-width:0}
+.dd-txn .dt-title{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dd-txn .dt-sub{font-size:11px;color:var(--gray-500)}
+.dd-txn .dt-amt{font-weight:800;font-size:13.5px;white-space:nowrap}
+.dd-txn.income .dt-amt{color:var(--green)} .dd-txn.expense .dt-amt{color:var(--red)}
+.dd-txn .dt-del{border:none;background:none;color:var(--gray-400);font-size:14px;padding:2px}
+
+/* ====== MODAL ====== */
+#modalOverlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:300;display:none;align-items:flex-end;justify-content:center}
+#modalOverlay.show{display:flex}
+#modalBox{background:var(--white);border-radius:20px 20px 0 0;width:100%;max-width:560px;max-height:92vh;overflow-y:auto;animation:slideUp .22s ease;position:relative}
+@keyframes slideUp{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+@media(min-width:641px){#modalOverlay{align-items:center}#modalBox{border-radius:20px}}
+#modalHead{padding:16px 18px;border-bottom:1px solid var(--gray-200);display:flex;align-items:center;gap:10px;position:sticky;top:0;background:var(--white);z-index:2}
+#modalHead h3{font-size:16px;font-weight:800;flex:1}
+#modalHead button{background:none;border:none;font-size:20px;color:var(--gray-500);padding:4px}
+#modalBody{padding:16px 18px}
+#modalBody .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+#modalBody .form-grid .full{grid-column:1/-1}
+#modalFoot{padding:14px 18px;border-top:1px solid var(--gray-200);display:flex;gap:10px;justify-content:flex-end;position:sticky;bottom:0;background:var(--white)}
+@media(max-width:480px){#modalBody .form-grid{grid-template-columns:1fr}}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.calc-hint{font-size:11px;color:var(--gray-500);margin-top:3px;font-weight:600}
+
+/* ====== TOAST ====== */
+#toastWrap{position:fixed;top:calc(var(--topbar-h) + 8px);left:50%;transform:translateX(-50%);z-index:500;display:flex;flex-direction:column;gap:6px;width:calc(100% - 28px);max-width:400px;pointer-events:none}
+.toast{background:var(--dark);color:var(--white);border-radius:10px;padding:11px 14px;font-size:13px;font-weight:600;box-shadow:var(--shadow-lg);display:flex;gap:8px;align-items:center;animation:toastIn .2s ease;pointer-events:auto}
+.toast.success{border-left:4px solid var(--green)}
+.toast.error{border-left:4px solid var(--pink)}
+.toast.info{border-left:4px solid var(--blue)}
+@keyframes toastIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+
+/* ====== FILTER BAR ====== */
+.filter-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.filter-bar select,.filter-bar input,.filter-bar .date-input{width:auto;min-width:110px;padding:8px 10px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);background:var(--white);font-size:12.5px;font-weight:600}
+.filter-bar .search-input{flex:1;min-width:140px}
+.period-tabs{display:flex;background:var(--gray-300);border-radius:10px;padding:3px;width:100%;overflow-x:auto;margin-bottom:12px}
+.period-tabs button{border:none;background:none;padding:7px 12px;font-size:12px;font-weight:700;border-radius:8px;color:var(--gray-600);white-space:nowrap}
+.period-tabs button.active{background:var(--dark);color:var(--white)}
+
+/* ====== CHART WRAPPER ====== */
+.chart-box{position:relative;height:230px}
+.chart-box.tall{height:300px}
+.chart-box canvas{max-height:100%}
+
+/* ====== INVENTORY ====== */
+.stock-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:800;padding:3px 9px;border-radius:12px}
+.stock-pill.ok{background:var(--green-bg);color:var(--green)}
+.stock-pill.low{background:var(--orange-bg);color:var(--orange)}
+.stock-pill.out{background:var(--red-bg);color:var(--red)}
+.progress{height:7px;background:var(--gray-200);border-radius:4px;overflow:hidden;min-width:60px}
+.progress .bar{height:100%;border-radius:4px;background:var(--yellow)}
+
+/* ====== PROJECTS ====== */
+.proj-card{border-left:4px solid var(--yellow);position:relative}
+.proj-card.completed{border-left-color:var(--green)}
+.proj-card.cancelled{border-left-color:var(--red)}
+.proj-card .p-status{position:absolute;top:12px;right:12px}
+.proj-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.proj-metrics .pm{background:var(--gray-100);border-radius:8px;padding:8px}
+.pm .pm-lbl{font-size:9.5px;font-weight:700;color:var(--gray-500);text-transform:uppercase}
+.pm .pm-val{font-size:13px;font-weight:800}
+.pm .pm-val.pos{color:var(--green)} .pm .pm-val.neg{color:var(--red)}
+
+/* ====== SETTINGS ====== */
+.set-group{border:1px solid var(--gray-300);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:14px;background:var(--white)}
+.set-group h3{font-size:14.5px;font-weight:800;margin-bottom:4px}
+.set-group .desc{font-size:12px;color:var(--gray-500);margin-bottom:12px}
+.set-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--gray-200);flex-wrap:wrap}
+.set-row:last-child{border-bottom:none}
+.set-row .sr-lbl{font-size:13px;font-weight:600}
+.set-row .sr-sub{font-size:11px;color:var(--gray-500)}
+.set-row input[type=text],.set-row input[type=number],.set-row select{width:170px;padding:7px 9px;border:1.5px solid var(--gray-300);border-radius:var(--radius-sm);font-size:12.5px}
+.toggle{position:relative;width:46px;height:26px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle .sl{position:absolute;inset:0;background:var(--gray-400);border-radius:13px;transition:.18s;cursor:pointer}
+.toggle .sl:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;background:var(--white);border-radius:50%;transition:.18s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.toggle input:checked+.sl{background:var(--green)}
+.toggle input:checked+.sl:before{transform:translateX(20px)}
+
+/* ====== MISC ====== */
+.empty-state{text-align:center;padding:34px 16px;color:var(--gray-500)}
+.empty-state .es-ico{font-size:40px;margin-bottom:8px;opacity:.5}
+.empty-state .es-txt{font-size:13px;font-weight:600}
+.empty-state .es-sub{font-size:11.5px;margin-top:3px}
+.chip{display:inline-block;background:var(--gray-200);border-radius:14px;padding:3px 10px;font-size:11px;font-weight:700;color:var(--gray-600);margin:2px}
+.chip.yellow{background:var(--yellow-light);color:var(--yellow-dark)}
+.mono{font-variant-numeric:tabular-nums}
+.big-num{font-size:24px;font-weight:800;letter-spacing:-.5px}
+.pos{color:var(--green);font-weight:700}.neg{color:var(--red);font-weight:700}
+.muted{color:var(--gray-500);font-size:11.5px}
+.text-right{text-align:right}
+.flex{display:flex;gap:8px;align-items:center}
+.flex-wrap{flex-wrap:wrap}
+.flex-1{flex:1;min-width:0}
+.mt-8{margin-top:8px}.mt-12{margin-top:12px}.mt-16{margin-top:16px}
+.mb-8{margin-bottom:8px}.mb-12{margin-bottom:12px}
+.hidden{display:none!important}
+@media(min-width:1025px){
+  .sidebar{transform:none}
+  .main{padding-left:calc(var(--sidebar-w) + 20px)}
+  .bottom-nav,.menu-btn{display:none!important}
+  .grid-4{grid-template-columns:repeat(4,1fr)}
+}
+@media(max-width:640px){
+  .grid-3,.grid-4,.grid-6{grid-template-columns:repeat(2,1fr)}
+  .cal-cell{min-height:62px}
+  .big-num{font-size:20px}
+}
+@media(max-width:380px){
+  .grid-3,.grid-4,.grid-6{grid-template-columns:repeat(2,1fr)}
+}
+.scroll-x{overflow-x:auto}
+</style>
+</head>
+<body>
+
+<!-- ====== LOGIN ====== -->
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="login-logo">🖨️</div>
+    <h1>JB Digital Printing</h1>
+    <div class="sub">Business Management System · <b id="loginBizName">Tigaon, Camarines Sur</b></div>
+    <div class="field">
+      <label>Email</label>
+      <input type="email" id="loginEmail" placeholder="email@example.com" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="loginPass" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn btn-yellow" id="loginBtn" onclick="doLogin()">Sign In</button>
+    <div id="loginError"></div>
+    <div class="login-foot">Cloud system · Data syncs across all devices</div>
+  </div>
+</div>
+
+<!-- ====== APP SHELL ====== -->
+<div id="appShell">
+  <div class="topbar">
+    <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+    <div class="brand"><div class="logo-mini">🖨️</div><span id="topbarBizName">JB Digital Printing</span></div>
+    <div class="user-chip" title=""><span id="topbarUserName">—</span><span class="role-badge" id="topbarRole">admin</span></div>
+  </div>
+
+  <nav class="sidebar" id="sidebar">
+    <div class="nav-item" data-page="dashboard" onclick="go('dashboard')"><span class="ico">📊</span>Dashboard</div>
+    <div class="nav-item" data-page="calendar" onclick="go('calendar')"><span class="ico">📅</span>Daily Calendar</div>
+    <div class="nav-item" data-page="sales" onclick="go('sales')"><span class="ico">💰</span>Sales / Income</div>
+    <div class="nav-item" data-page="expenses" onclick="go('expenses')"><span class="ico">💸</span>Expenses</div>
+    <div class="nav-sep"></div>
+    <div class="nav-item" data-page="inventory" onclick="go('inventory')"><span class="ico">📦</span>Inventory</div>
+    <div class="nav-item" data-page="projects" onclick="go('projects')"><span class="ico">📐</span>Projects</div>
+    <div class="nav-item" data-page="customers" onclick="go('customers')"><span class="ico">👥</span>Customers</div>
+    <div class="nav-item" data-page="suppliers" onclick="go('suppliers')"><span class="ico">🚚</span>Suppliers</div>
+    <div class="nav-sep"></div>
+    <div class="nav-item" data-page="pnl" onclick="go('pnl')"><span class="ico">📈</span>Profit &amp; Loss</div>
+    <div class="nav-item" data-page="reports" onclick="go('reports')"><span class="ico">🗂️</span>Reports</div>
+    <div class="nav-item" data-page="settings" onclick="go('settings')"><span class="ico">⚙️</span>Settings</div>
+  </nav>
+
+  <main class="main" id="mainArea">
+    <!-- Dashboard -->
+    <div class="page" id="page-dashboard">
+      <div class="page-head"><h2>📊 Dashboard</h2><div class="actions">
+        <select id="dashPeriod" onchange="renderDashboard()">
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="week">This Week</option>
+          <option value="lastweek">Last Week</option>
+          <option value="month">This Month</option>
+          <option value="lastmonth">Last Month</option>
+          <option value="quarter">This Quarter</option>
+          <option value="year">This Year</option>
+          <option value="custom">Custom Range</option>
+        </select>
+        <span id="dashCustomRange" class="hidden"><input type="date" id="dashFrom" onchange="renderDashboard()"> – <input type="date" id="dashTo" onchange="renderDashboard()"></span>
+      </div></div>
+      <div id="dashContent"></div>
+    </div>
+
+    <!-- Calendar -->
+    <div class="page" id="page-calendar">
+      <div class="page-head"><h2>📅 Daily Calendar</h2><div class="actions">
+        <button class="btn btn-yellow btn-sm" onclick="openQuickAdd('income')">+ Income</button>
+        <button class="btn btn-pink btn-sm" onclick="openQuickAdd('expense')">+ Expense</button>
+      </div></div>
+      <div id="calContent"></div>
+    </div>
+
+    <!-- Sales -->
+    <div class="page" id="page-sales">
+      <div class="page-head"><h2>💰 Sales / Income</h2><div class="actions">
+        <button class="btn btn-yellow btn-sm" onclick="openSaleModal()">+ Add Sale</button>
+        <button class="btn btn-outline btn-sm" onclick="exportSalesCSV()">⬇ CSV</button>
+      </div></div>
+      <div class="card" style="padding:12px">
+        <div class="filter-bar">
+          <input type="search" class="search-input" id="salesSearch" placeholder="🔍 Search customer / item / ID..." oninput="renderSales()">
+          <select id="salesCatFilter" onchange="renderSales()"><option value="">All Categories</option></select>
+          <select id="salesStatusFilter" onchange="renderSales()"><option value="">All Status</option><option value="Paid">Paid</option><option value="Partial">Partial</option><option value="Unpaid">Unpaid</option></select>
+          <input type="date" id="salesFrom" onchange="renderSales()">
+          <span class="muted">to</span>
+          <input type="date" id="salesTo" onchange="renderSales()">
+        </div>
+        <div id="salesSummary" class="flex flex-wrap mb-8"></div>
+      </div>
+      <div id="salesList"></div>
+    </div>
+
+    <!-- Expenses -->
+    <div class="page" id="page-expenses">
+      <div class="page-head"><h2>💸 Expenses</h2><div class="actions">
+        <button class="btn btn-pink btn-sm" onclick="openExpenseModal()">+ Add Expense</button>
+        <button class="btn btn-outline btn-sm" onclick="exportExpensesCSV()">⬇ CSV</button>
+      </div></div>
+      <div class="card" style="padding:12px">
+        <div class="filter-bar">
+          <input type="search" class="search-input" id="expSearch" placeholder="🔍 Search description / supplier..." oninput="renderExpenses()">
+          <select id="expCatFilter" onchange="renderExpenses()"><option value="">All Categories</option></select>
+          <select id="expProjFilter" onchange="renderExpenses()"><option value="">All Projects</option><option value="__none__">No Project</option></select>
+          <input type="date" id="expFrom" onchange="renderExpenses()">
+          <span class="muted">to</span>
+          <input type="date" id="expTo" onchange="renderExpenses()">
+        </div>
+        <div id="expSummary" class="flex flex-wrap mb-8"></div>
+      </div>
+      <div id="expList"></div>
+    </div>
+
+    <!-- Inventory -->
+    <div class="page" id="page-inventory">
+      <div class="page-head"><h2>📦 Inventory</h2><div class="actions">
+        <button class="btn btn-green btn-sm" onclick="openRestockModal()">+ Restock</button>
+        <button class="btn btn-yellow btn-sm" onclick="openInvItemModal()">+ Item</button>
+        <button class="btn btn-outline btn-sm" onclick="openInvTxModal()">⏱ Use Material</button>
+        <button class="btn btn-outline btn-sm" onclick="exportInventoryCSV()">⬇ CSV</button>
+      </div></div>
+      <div class="filter-bar">
+        <input type="search" class="search-input" id="invSearch" placeholder="🔍 Search item / SKU..." oninput="renderInventory()">
+        <select id="invCatFilter" onchange="renderInventory()"><option value="">All Categories</option></select>
+        <select id="invStockFilter" onchange="renderInventory()"><option value="">All Stock</option><option value="low">Low Stock</option><option value="out">Out of Stock</option></select>
+      </div>
+      <div id="invSummary" class="grid grid-3 mb-12"></div>
+      <div id="invList"></div>
+      <div class="card mt-16"><h3>⏱ Inventory History <span class="sub">last 50 movements</span></h3><div id="invHistory"></div></div>
+    </div>
+
+    <!-- Projects -->
+    <div class="page" id="page-projects">
+      <div class="page-head"><h2>📐 Projects</h2><div class="actions">
+        <button class="btn btn-yellow btn-sm" onclick="openProjectModal()">+ Create Project</button>
+        <button class="btn btn-outline btn-sm" onclick="exportProjectsCSV()">⬇ CSV</button>
+      </div></div>
+      <div class="filter-bar">
+        <input type="search" class="search-input" id="projSearch" placeholder="🔍 Search project..." oninput="renderProjects()">
+        <select id="projStatusFilter" onchange="renderProjects()"><option value="">All Status</option><option value="Quotation">Quotation</option><option value="Pending">Pending</option><option value="In Production">In Production</option><option value="Completed">Completed</option><option value="Delivered">Delivered</option><option value="Cancelled">Cancelled</option></select>
+      </div>
+      <div id="projList"></div>
+    </div>
+
+    <!-- Customers -->
+    <div class="page" id="page-customers">
+      <div class="page-head"><h2>👥 Customers</h2><div class="actions">
+        <button class="btn btn-yellow btn-sm" onclick="openCustomerModal()">+ Add Customer</button>
+        <button class="btn btn-outline btn-sm" onclick="exportCustomersCSV()">⬇ CSV</button>
+      </div></div>
+      <div class="filter-bar">
+        <input type="search" class="search-input" id="custSearch" placeholder="🔍 Search customer..." oninput="renderCustomers()">
+      </div>
+      <div id="custList"></div>
+    </div>
+
+    <!-- Suppliers -->
+    <div class="page" id="page-suppliers">
+      <div class="page-head"><h2>🚚 Suppliers</h2><div class="actions">
+        <button class="btn btn-yellow btn-sm" onclick="openSupplierModal()">+ Add Supplier</button>
+        <button class="btn btn-outline btn-sm" onclick="exportSuppliersCSV()">⬇ CSV</button>
+      </div></div>
+      <div class="filter-bar">
+        <input type="search" class="search-input" id="supSearch" placeholder="🔍 Search supplier..." oninput="renderSuppliers()">
+      </div>
+      <div id="supList"></div>
+    </div>
+
+    <!-- P&L -->
+    <div class="page" id="page-pnl">
+      <div class="page-head"><h2>📈 Profit &amp; Loss</h2><div class="actions">
+        <select id="pnlPeriod" onchange="renderPnL()">
+          <option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option><option value="custom">Custom Range</option>
+        </select>
+        <span id="pnlCustom" class="hidden"><input type="date" id="pnlFrom" onchange="renderPnL()"> – <input type="date" id="pnlTo" onchange="renderPnL()"></span>
+        <button class="btn btn-outline btn-sm" onclick="exportPnLPDF()">⬇ PDF</button>
+        <button class="btn btn-outline btn-sm" onclick="exportPnLCSV()">⬇ CSV</button>
+      </div></div>
+      <div id="pnlContent"></div>
+    </div>
+
+    <!-- Reports -->
+    <div class="page" id="page-reports">
+      <div class="page-head"><h2>🗂️ Reports</h2><div class="actions">
+        <select id="repPeriod" onchange="renderReports()">
+          <option value="month">This Month</option><option value="lastmonth">Last Month</option><option value="year">This Year</option><option value="custom">Custom Range</option>
+        </select>
+        <span id="repCustom" class="hidden"><input type="date" id="repFrom" onchange="renderReports()"> – <input type="date" id="repTo" onchange="renderReports()"></span>
+      </div></div>
+      <div id="repContent"></div>
+    </div>
+
+    <!-- Settings -->
+    <div class="page" id="page-settings">
+      <div class="page-head"><h2>⚙️ Settings</h2></div>
+      <div id="settingsContent"></div>
+    </div>
+  </main>
+
+  <!-- Bottom nav (mobile) -->
+  <nav class="bottom-nav" id="bottomNav">
+    <button class="bn-item" data-page="dashboard" onclick="go('dashboard')"><span class="ico">📊</span>Home</button>
+    <button class="bn-item" data-page="calendar" onclick="go('calendar')"><span class="ico">📅</span>Calendar</button>
+    <button class="bn-add" onclick="openQuickAdd('income')"><span class="fab">+</span><span class="lbl">Quick Add</span></button>
+    <button class="bn-item" data-page="sales" onclick="go('sales')"><span class="ico">💰</span>Sales</button>
+    <button class="bn-item" data-page="inventory" onclick="go('inventory')"><span class="ico">📦</span>Stock</button>
+  </nav>
+</div>
+
+<!-- ====== DAY DETAIL DRAWER ====== -->
+<div id="dayDetail">
+  <div class="dd-head">
+    <h3 id="ddTitle">—</h3>
+    <div class="dd-sub" id="ddSub">—</div>
+    <button class="dd-close" onclick="closeDayDetail()">✕</button>
+  </div>
+  <div class="dd-stats">
+    <div class="ds income"><div class="ds-lbl">Income</div><div class="ds-val" id="ddIncome">₱0</div></div>
+    <div class="ds expense"><div class="ds-lbl">Expenses</div><div class="ds-val" id="ddExpense">₱0</div></div>
+    <div class="ds net"><div class="ds-lbl">Net Profit</div><div class="ds-val" id="ddNet">₱0</div></div>
+    <div class="ds count"><div class="ds-lbl">Transactions</div><div class="ds-val" id="ddCount">0</div></div>
+  </div>
+  <div class="dd-quick">
+    <button class="btn btn-yellow" onclick="openQuickAdd('income', dayDetailDate)">+ ADD INCOME</button>
+    <button class="btn btn-pink" onclick="openQuickAdd('expense', dayDetailDate)">+ ADD EXPENSE</button>
+  </div>
+  <div class="dd-txns" id="ddTxns"></div>
+</div>
+
+<!-- ====== MODAL ====== -->
+<div id="modalOverlay" onclick="if(event.target===this)closeModal()">
+  <div id="modalBox">
+    <div id="modalHead"><h3 id="modalTitle">Title</h3><button onclick="closeModal()">✕</button></div>
+    <div id="modalBody"></div>
+    <div id="modalFoot"></div>
+  </div>
+</div>
+
+<div id="toastWrap"></div>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/db.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/core.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/calendar.js"></script>
+<script src="js/transactions.js"></script>
+<script src="js/inventory.js"></script>
+<script src="js/projects.js"></script>
+<script src="js/partners.js"></script>
+<script src="js/reports.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
