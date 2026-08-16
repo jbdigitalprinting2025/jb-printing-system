@@ -103,7 +103,7 @@ function openInvItemModal(existing) {
       <div class="field"><label>Material Name *</label><input type="text" id="invName" value="${escapeHtml(it.name || '')}" placeholder="e.g., Tarpaulin Roll"></div>
       <div class="field"><label>Category</label><input type="text" id="invCat" value="${escapeHtml(it.category || '')}" placeholder="e.g., Materials"></div>
       <div class="field"><label>Unit</label><select id="invUnit">${INVENTORY_UNITS.map(u => `<option ${it.unit === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
-      <div class="field"><label>Current Stock</label><input type="number" id="invCurrent" value="${it.currentStock ?? 0}" min="0" step="any"></div>
+      <div class="field"><label>Current Stock ${it ? '(READ ONLY — change via Restock / Use / Adjustment)' : '(initial stock)'}</label><input type="number" id="invCurrent" value="${it.currentStock ?? 0}" min="0" step="any" ${it ? 'disabled style="background:var(--gray-100)"' : ''}></div>
       <div class="field"><label>Minimum Stock</label><input type="number" id="invMin" value="${it.minStock ?? 0}" min="0" step="any"></div>
       <div class="field"><label>Maximum Stock</label><input type="number" id="invMax" value="${it.maxStock ?? 0}" min="0" step="any"></div>
       <div class="field"><label>Cost Per Unit (₱)</label><input type="number" id="invCost" value="${it.costPerUnit ?? ''}" min="0" step="0.01"></div>
@@ -260,15 +260,20 @@ class StockError extends Error {
 }
 function computeStockUpdate(prevStock, type, qtyRaw, costPerUnit) {
   const prev = Number(prevStock) || 0;
-  const qty = Number(qtyRaw) || 0;
+  let qty = Number(qtyRaw) || 0;
   if (!isFinite(qty) || qty === 0) return { ok: false, error: 'Enter a valid quantity' };
   let newStock, signedQty;
   if (type === 'restock') {
     if (qty <= 0) return { ok: false, error: 'Restock quantity must be positive' };
     newStock = prev + qty; signedQty = qty;
   } else if (type === 'adjustment') {
-    // adjustment is the AUTHORIZED way to fix stock; still never below zero
-    newStock = prev + qty; signedQty = qty;
+    // adjustment is the AUTHORIZED way to fix stock; direction comes from the
+    // sign of the input (+ add / - remove). qty is stored as a POSITIVE number
+    // and signedQty carries the direction — the Firestore rule enforces
+    // prevStock + signedQty == newStock with qty > 0.
+    const raw = qty;
+    newStock = round2(prev + raw); signedQty = round2(raw);
+    qty = Math.abs(raw); // normalized positive for the movement record
   } else { // usage / sold / damaged / lost
     if (qty <= 0) return { ok: false, error: 'Quantity must be positive for this type' };
     if (qty > prev) return { ok: false, error: `Insufficient stock. Available stock: ${fmtNum(prev)}.` };
@@ -292,6 +297,11 @@ async function saveInvTx(forcedType) {
     const qtyRaw = parseFloat(document.getElementById('txQty').value);
     const date = parseDateInput(document.getElementById('txDate').value) || new Date();
     const notes = document.getElementById('txNotes').value.trim();
+    // Adjustments must carry a reason so stock changes are always explainable
+    if ((type === 'adjustment' || type === 'damaged' || type === 'lost') && !notes) {
+      showToast(`A reason is required for ${type} movements`, 'error');
+      return;
+    }
     const projectId = document.getElementById('txProject') ? document.getElementById('txProject').value : '';
     const asExpense = document.getElementById('txAsExpense') ? document.getElementById('txAsExpense').checked : false;
     let costPerUnit = Number(item.costPerUnit) || 0;
@@ -315,7 +325,7 @@ async function saveInvTx(forcedType) {
         itemUpdate.costPerUnit = costPerUnit;
         itemUpdate.lastRestockDate = firebase.firestore.Timestamp.fromDate(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0));
       } else if (type === 'usage' || type === 'sold') { itemUpdate.totalUsed = (Number(liveItem.totalUsed) || 0) + calc.qty; }
-      else if (type === 'adjustment') { itemUpdate.totalAdjustments = (Number(liveItem.totalAdjustments) || 0) + calc.qty; }
+      else if (type === 'adjustment') { itemUpdate.totalAdjustments = (Number(liveItem.totalAdjustments) || 0) + calc.signedQty; }
       t.update(itemRef, itemUpdate);
 
       // movement record — unique id reserved inside the transaction
