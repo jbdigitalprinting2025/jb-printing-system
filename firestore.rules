@@ -156,10 +156,14 @@ service cloud.firestore {
                ? get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
                : 0)
               - (resource.data.amount || 0) + request.resource.data.amount;
+      // Delete: on delete operations request.resource is NULL, so the existing
+      // doc must be read via `resource` (projectId + amount). amountPaid must
+      // drop by exactly the deleted amount in the same batch.
       allow delete: if isActiveStaffOrAdmin()
-        && getAfter(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
-           == ('amountPaid' in get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data
-               ? get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
+        && exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
+        && getAfter(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.amountPaid
+           == ('amountPaid' in get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data
+               ? get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.amountPaid
                : 0)
               - (resource.data.amount || 0);
     }
