@@ -1,12 +1,12 @@
 {
-  "name": "jb-printing-system-functions",
-  "description": "Scheduled retention cleanup for JB Digital Printing",
+  "name": "jb-printing-functions",
+  "description": "JB Digital Printing — scheduled retention + admin callable functions (Admin SDK)",
   "version": "1.0.0",
-  "private": true,
-  "engines": { "node": "18" },
   "main": "index.js",
+  "engines": { "node": "18" },
   "dependencies": {
     "firebase-admin": "^11.11.1",
     "firebase-functions": "^4.9.0"
-  }
+  },
+  "private": true
 }
