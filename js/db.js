@@ -28,12 +28,23 @@ function initFirebase() {
 async function loadUserDoc() {
   try {
     const snap = await db.collection(COLL.users).doc(currentUser.uid).get();
+    // Owner emails are ALWAYS admin (safety net)
+    const forcedRole = (ADMIN_EMAILS || []).includes((currentUser.email || '').toLowerCase()) ? 'admin' : null;
     if (snap.exists) {
       currentUserDoc = snap.data();
+      if (forcedRole && currentUserDoc.role !== forcedRole) {
+        currentUserDoc.role = forcedRole;
+        await db.collection(COLL.users).doc(currentUser.uid).update({ role: forcedRole, updatedAt: nowTS() }).catch(() => {});
+      }
     } else {
       // First-ever user becomes admin; otherwise viewer by default
-      const countSnap = await db.collection(COLL.users).limit(1).get();
-      const role = countSnap.empty ? 'admin' : 'viewer';
+      let role = forcedRole || 'viewer';
+      if (!forcedRole) {
+        try {
+          const countSnap = await db.collection(COLL.users).limit(1).get();
+          if (countSnap.empty) role = 'admin';
+        } catch (e) { /* rules may be locked; keep viewer */ }
+      }
       const userData = {
         uid: currentUser.uid,
         email: currentUser.email || '',
