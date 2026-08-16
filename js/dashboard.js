@@ -25,16 +25,19 @@ function renderDashboard() {
   document.getElementById('dashCustomRange').classList.toggle('hidden', document.getElementById('dashPeriod').value !== 'custom');
   const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const expenses = activeExpenses().filter(e => { const d = tsToDate(e.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
+  // Income = recorded sales + project payments received (projRev 1:1 with payments,
+  // never double-counted). Keeps dashboard consistent with the global P&L.
+  const projRevInRange = State.projRev.filter(r => { const d = tsToDate(r.date || r.createdAt); return !r.archived && d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
 
-  const totalIncome = sumBy(sales, saleTotal);
+  const totalIncome = round2(round2(sumBy(sales, saleTotal)) + sumBy(projRevInRange, r => Number(r.amount) || 0));
   const totalExpenses = sumBy(expenses, e => e.amount);
   const net = totalIncome - totalExpenses;
 
   // ==== Period cards ====
-  const noData = sales.length === 0 && expenses.length === 0;
+  const noData = sales.length === 0 && expenses.length === 0 && projRevInRange.length === 0;
   const periodCard = `
     <div class="grid grid-3 mb-12">
-      <div class="stat-card green"><div class="lbl">Income</div><div class="val">${fmtMoneyShort(totalIncome)}</div><div class="note">${noData ? 'No transactions yet' : sales.length + ' transactions'}</div><div class="ico">💰</div></div>
+      <div class="stat-card green"><div class="lbl">Income</div><div class="val">${fmtMoneyShort(totalIncome)}</div><div class="note">${noData ? 'No transactions yet' : sales.length + projRevInRange.length + ' transactions'}</div><div class="ico">💰</div></div>
       <div class="stat-card red"><div class="lbl">Expenses</div><div class="val">${fmtMoneyShort(totalExpenses)}</div><div class="note">${noData ? 'No expenses recorded' : expenses.length + ' transactions'}</div><div class="ico">💸</div></div>
       <div class="stat-card ${net >= 0 ? 'yellow' : 'pink'}"><div class="lbl">Net Profit / Loss</div><div class="val">${fmtMoneyShort(net)}</div><div class="note">${noData ? 'Add your first sale to start' : (net >= 0 ? '▲ Profit' : '▼ Loss')}</div><div class="ico">📈</div></div>
     </div>`;
