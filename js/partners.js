@@ -127,7 +127,7 @@ function viewCustomer(id) {
     <h4 style="font-size:12.5px;font-weight:800;color:var(--gray-500);text-transform:uppercase;margin-bottom:8px">Recent Transactions</h4>
     <div class="tbl-wrap"><table class="tbl" style="min-width:400px"><thead><tr><th>Date</th><th>ID</th><th>Items</th><th class="num">Total</th><th>Status</th></tr></thead>
     <tbody>${sales.map(s => {
-      const items = (s.items || []).map(i => i.product || '').join(', ') || s.category || 'Sale';
+      const items = (Array.isArray(s.items) ? s.items : []).map(i => i.product || '').join(', ') || s.category || 'Sale';
       return `<tr><td>${escapeHtml(fmtDate(s.date))}</td><td>${escapeHtml(s.transactionId || '')}</td><td>${escapeHtml(items)}</td><td class="num">${fmtMoney(saleTotal(s))}</td><td>${paymentBadge(s.paymentStatus || 'Unpaid')}</td></tr>`;
     }).join('') || `<tr><td colspan="5">${emptyState('🧾', 'No transactions yet')}</td></tr>`}</tbody></table></div>
     <h4 style="font-size:12.5px;font-weight:800;color:var(--gray-500);text-transform:uppercase;margin:14px 0 8px">Projects</h4>
