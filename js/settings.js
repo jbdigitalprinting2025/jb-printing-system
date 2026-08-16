@@ -481,6 +481,29 @@ async function restoreBackup(file) {
     const text = await file.text();
     const data = JSON.parse(text);
     if (!data.sales || !data.expenses) { showToast('Not a valid backup file', 'error'); return; }
+    // SAFETY: build an automatic PRE-RESTORE snapshot of the CURRENT data first.
+    // If anything goes wrong during restore, the admin still has the pre-restore
+    // file to recover the pre-restore state.
+    const preRestore = {
+      app: 'jb-printing-system', version: 3,
+      exportedAt: new Date().toISOString(),
+      preRestore: true,
+      settings: settingsCache || {},
+      customers: State.customers, suppliers: State.suppliers,
+      sales: State.sales, expenses: State.expenses,
+      inventory: State.inventory, inventory_transactions: State.invTx,
+      projects: State.projects, project_revenue: State.projRev,
+      project_expenses: State.projExp, payments: State.payments,
+      users: State.users
+    };
+    const blob = new Blob([JSON.stringify(preRestore, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `jb-pre-restore-${dateInputVal(new Date())}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    try { await db.collection(COLL.backups).add({ fileName: a.download, preRestore: true, createdAt: nowTS() }); } catch (e) { console.warn('pre-restore cloud copy failed', e); }
+
     const counts = `Sales: ${data.sales.length} · Expenses: ${data.expenses.length} · Inventory: ${data.inventory ? data.inventory.length : 0} · Projects: ${data.projects ? data.projects.length : 0}`;
     confirmModal('⚠️ Restore Backup', `This will OVERWRITE current data with the backup.\n\n${counts}\n\nThis cannot be undone. Proceed?`, async () => {
       try {
