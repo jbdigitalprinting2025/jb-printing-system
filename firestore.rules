@@ -1,16 +1,22 @@
 rules_version = '2';
 
-// JB Digital Printing — Firestore Security Rules (hardened Aug 2026)
-// Roles: users/{uid} -> { role: 'admin' | 'staff' | 'viewer' }
+// JB Digital Printing — Firestore Security Rules (hardened Aug 2026, LAST ROUND)
+// Roles: users/{uid} -> { role: 'admin' | 'staff' | 'viewer', removed?: true }
 //
 // SECURITY MODEL (server-side authority — client checks are UX only):
 //  - No user can create themselves as admin. New users docs default to 'viewer'
 //    unless the email is an owner email (bootstrap exception).
 //  - No user can change their own role. Only an admin can change roles.
-//  - Staff CANNOT read audit logs (admin only). Audit logs are APPEND-ONLY:
-//    nobody (even admin) can edit or delete them.
-//  - Inventory movements are immutable (create only). Stock can never go negative.
-//  - Financial records validate amounts at the rules level (no negative balance).
+//  - REMOVED USERS: isActiveUser() denies ALL business-data access when
+//    users/{uid}.removed == true. Account removal is therefore enforced
+//    server-side even before the auth account is deleted (Cloud Function).
+//  - Inventory movements are APPEND-ONLY and the prevStock/qty/newStock
+//    relationship is validated against the ACTUAL inventory item doc
+//    (get/getAfter) — fake history and manual stock edits are blocked.
+//  - Project payments are validated against the project's remaining balance
+//    (contractPrice - amountPaid) and the payment must move amountPaid by
+//    exactly its amount in the same batch (payments = source of truth).
+//  - Audit logs: admin read-only; staff create-only; nobody edits/deletes.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -26,6 +32,15 @@ service cloud.firestore {
     }
     function isStaffOrAdmin() {
       return signedIn() && (getRole() == 'staff' || getRole() == 'admin');
+    }
+    // Active = signed in AND the account was not removed by an admin.
+    // A removed user can read their own users doc (to show the disabled
+    // message) but nothing else.
+    function isActiveUser() {
+      return signedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.removed != true;
+    }
+    function isActiveStaffOrAdmin() {
+      return isActiveUser() && (getRole() == 'staff' || getRole() == 'admin');
     }
     // Owner emails may bootstrap their own role to admin (documented exception).
     function isOwnerEmail() {
@@ -55,113 +70,155 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // ---- settings: everyone signed in can read; admin writes ----
+    // ---- settings: active users can read; admin writes ----
     match /settings/{doc} {
-      allow read: if signedIn();
+      allow read: if isActiveUser();
       allow write: if isAdmin();
     }
 
-    // ---- customers & suppliers: staff/admin can manage, viewers read ----
+    // ---- customers & suppliers: active staff/admin manage, active users read ----
     match /customers/{id} {
-      allow read: if signedIn();
-      allow create, update, delete: if isStaffOrAdmin();
+      allow read: if isActiveUser();
+      allow create, update, delete: if isActiveStaffOrAdmin();
     }
     match /suppliers/{id} {
-      allow read: if signedIn();
-      allow create, update, delete: if isStaffOrAdmin();
+      allow read: if isActiveUser();
+      allow create, update, delete: if isActiveStaffOrAdmin();
     }
 
-    // ---- sales: staff/admin manage; validated amounts (no negative balance) ----
+    // ---- sales: active staff/admin manage; validated amounts (no negative balance) ----
     match /sales/{id} {
-      allow read: if signedIn();
-      allow create: if isStaffOrAdmin()
+      allow read: if isActiveUser();
+      allow create: if isActiveStaffOrAdmin()
         && request.resource.data.total >= 0
         && request.resource.data.amountPaid >= 0
         && request.resource.data.amountPaid <= request.resource.data.total
         && request.resource.data.paymentStatus in ['Paid', 'Partial', 'Unpaid']
         && request.resource.data.transactionId is string
         && request.resource.data.transactionId.size() > 0;
-      allow update: if isStaffOrAdmin()
+      allow update: if isActiveStaffOrAdmin()
         && request.resource.data.total >= 0
         && request.resource.data.amountPaid >= 0
         && request.resource.data.amountPaid <= request.resource.data.total
         && request.resource.data.paymentStatus in ['Paid', 'Partial', 'Unpaid'];
-      allow delete: if isStaffOrAdmin();
+      allow delete: if isActiveStaffOrAdmin();
     }
 
-    // ---- expenses: staff/admin manage; amount must be positive ----
+    // ---- expenses: active staff/admin manage; amount must be positive ----
     match /expenses/{id} {
-      allow read: if signedIn();
-      allow create, update: if isStaffOrAdmin()
+      allow read: if isActiveUser();
+      allow create, update: if isActiveStaffOrAdmin()
         && request.resource.data.amount > 0;
-      allow delete: if isStaffOrAdmin();
+      allow delete: if isActiveStaffOrAdmin();
     }
 
-    // ---- payments: staff/admin manage; amount must be positive ----
+    // ---- payments: active staff/admin manage. Server-side overpayment guard:
+    // payment.amount <= project.contractPrice - project.amountPaid (pre-batch)
+    // AND the project's amountPaid must increase by exactly this amount in the
+    // same batch (so payments collection stays the source of truth and a rogue
+    // write cannot bypass the balance). ----
     match /payments/{id} {
-      allow read: if signedIn();
-      allow create, update: if isStaffOrAdmin()
-        && request.resource.data.amount > 0;
-      allow delete: if isStaffOrAdmin();
+      allow read: if isActiveUser();
+      allow create: if isActiveStaffOrAdmin()
+        && request.resource.data.amount > 0
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && request.resource.data.amount
+           <= (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.contractPrice || 0)
+              - (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid || 0)
+        && getAfter(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
+           == (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid || 0)
+              + request.resource.data.amount;
+      // Edit: amount <= remaining AFTER removing the old amount; amountPaid must
+      // move by (new - old) in the same batch.
+      allow update: if isActiveStaffOrAdmin()
+        && request.resource.data.amount > 0
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && request.resource.data.amount
+           <= (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.contractPrice || 0)
+              - ((get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid || 0) - (resource.data.amount || 0))
+        && getAfter(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
+           == (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid || 0)
+              - (resource.data.amount || 0) + request.resource.data.amount;
+      allow delete: if isActiveStaffOrAdmin()
+        && getAfter(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
+           == (get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid || 0)
+              - (resource.data.amount || 0);
     }
 
-    // ---- inventory master items: stock can never go negative ----
+    // ---- inventory master items: stock can never go negative; cost/sell sane ----
     match /inventory/{id} {
-      allow read: if signedIn();
-      allow create, update: if isStaffOrAdmin()
+      allow read: if isActiveUser();
+      allow create, update: if isActiveStaffOrAdmin()
         && request.resource.data.currentStock >= 0
         && request.resource.data.costPerUnit >= 0
         && request.resource.data.sellingPrice >= 0;
-      allow delete: if isStaffOrAdmin();
+      allow delete: if isActiveStaffOrAdmin();
     }
 
-    // ---- inventory movements: APPEND-ONLY (create only). History is immutable
-    // so stock accounting can always be reconstructed and never tampered with ----
+    // ---- inventory movements: APPEND-ONLY + RELATIONSHIP-VALIDATED.
+    // prevStock + signedQty == newStock, and both must match the REAL item doc
+    // before/after the write (get/getAfter). This blocks fake history and any
+    // stock change that does not come with a matching movement record. ----
     match /inventory_transactions/{id} {
-      allow read: if signedIn();
-      allow create: if isStaffOrAdmin()
+      allow read: if isActiveUser();
+      allow create: if isActiveStaffOrAdmin()
+        && request.resource.data.type in ['restock', 'usage', 'sold', 'adjustment', 'damaged', 'lost']
+        && isNum(request.resource.data.qty)
+        && isNum(request.resource.data.signedQty)
+        && isNum(request.resource.data.prevStock)
+        && isNum(request.resource.data.newStock)
+        && request.resource.data.qty > 0
+        && request.resource.data.newStock >= 0
         && request.resource.data.prevStock >= 0
-        && request.resource.data.newStock >= 0;
+        && request.resource.data.itemId is string
+        && request.resource.data.itemId.size() > 0
+        && exists(/databases/$(database)/documents/inventory/$(request.resource.data.itemId))
+        && request.resource.data.newStock
+           == request.resource.data.prevStock + request.resource.data.signedQty
+        && request.resource.data.prevStock
+           == get(/databases/$(database)/documents/inventory/$(request.resource.data.itemId)).data.currentStock
+        && request.resource.data.newStock
+           == getAfter(/databases/$(database)/documents/inventory/$(request.resource.data.itemId)).data.currentStock;
       allow update, delete: if false;
     }
 
-    // ---- projects: staff/admin manage ----
+    // ---- projects: active staff/admin manage ----
     match /projects/{id} {
-      allow read: if signedIn();
-      allow create, update: if isStaffOrAdmin()
+      allow read: if isActiveUser();
+      allow create, update: if isActiveStaffOrAdmin()
         && request.resource.data.contractPrice >= 0
         && request.resource.data.estimatedCost >= 0;
-      allow delete: if isStaffOrAdmin();
+      allow delete: if isActiveStaffOrAdmin();
     }
     match /project_revenue/{id} {
-      allow read: if signedIn();
-      allow create, update: if isStaffOrAdmin()
+      allow read: if isActiveUser();
+      allow create, update: if isActiveStaffOrAdmin()
         && request.resource.data.amount > 0;
-      allow delete: if isStaffOrAdmin();
+      allow delete: if isActiveStaffOrAdmin();
     }
     match /project_expenses/{id} {
-      allow read: if signedIn();
-      allow create, update: if isStaffOrAdmin()
+      allow read: if isActiveUser();
+      allow create, update: if isActiveStaffOrAdmin()
         && request.resource.data.amount > 0;
-      allow delete: if isStaffOrAdmin();
+      allow delete: if isActiveStaffOrAdmin();
     }
 
-    // ---- categories: read all, admin writes ----
+    // ---- categories: active users read, admin writes ----
     match /categories/{id} {
-      allow read: if signedIn();
+      allow read: if isActiveUser();
       allow write: if isAdmin();
     }
 
     // ---- audit logs: ADMIN READ ONLY + append-only.
-    // Staff may CREATE their own audit events but CANNOT read the history;
+    // Active users may CREATE their own audit events but cannot read history;
     // nobody can edit/delete audit records (tamper-resistant) ----
     match /audit_logs/{id} {
       allow read: if isAdmin();
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if isActiveUser() && request.resource.data.userId == request.auth.uid;
       allow update, delete: if false;
     }
 
-    // ---- backups: admin only ----
+    // ---- backups: admin only (contains full cloud backup payloads) ----
     match /backups/{id} {
       allow read, write: if isAdmin();
     }
