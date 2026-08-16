@@ -20,11 +20,12 @@ service cloud.firestore {
       return signedIn() && (getRole() == 'staff' || getRole() == 'admin');
     }
 
-    // ---- users: anyone signed in can read; only admin can write roles ----
+    // ---- users: anyone signed in can read; only admin can change roles ----
+    // NOTE: a user can edit their own doc but CANNOT change their own role (prevents self-promotion)
     match /users/{uid} {
       allow read: if signedIn();
       allow create: if signedIn() && request.auth.uid == uid;
-      allow update: if isAdmin() || request.auth.uid == uid;
+      allow update: if isAdmin() || (request.auth.uid == uid && request.resource.data.role == resource.data.role);
       allow delete: if isAdmin();
     }
 
