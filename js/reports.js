@@ -81,13 +81,40 @@ function invPurchasesForRange(from, to) {
     return d && e.inventoryTransactionId && d.getTime() >= from.getTime() && d.getTime() <= to.getTime();
   }), e => Number(e.amount) || 0);
 }
+// PROJECT REVENUE (reported, not double-counted):
+//  - projRev records are created 1:1 from project PAYMENTS (source 'payment',
+//    paymentId link, deduped on edit/delete). Summing projRev = money actually
+//    collected from projects in the period.
+//  - Global Revenue = Sales + Project Revenue. A project should be tracked as a
+//    project OR invoiced as a sale — never both — otherwise the same work would
+//    be counted twice (the accounting model documented here).
+function projRevForRange(from, to) {
+  return round2(sumBy(State.projRev.filter(r => {
+    if (r.archived) return false;
+    const d = tsToDate(r.date || r.createdAt);
+    return d && d.getTime() >= from.getTime() && d.getTime() <= to.getTime();
+  }), r => Number(r.amount) || 0));
+}
+function countProjRev(from, to) {
+  return State.projRev.filter(r => {
+    if (r.archived) return false;
+    const d = tsToDate(r.date || r.createdAt);
+    return d && d.getTime() >= from.getTime() && d.getTime() <= to.getTime();
+  }).length;
+}
+function revenueForRange(from, to) {
+  const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= from.getTime() && d.getTime() <= to.getTime(); });
+  return round2(round2(sumBy(sales, saleTotal)) + projRevForRange(from, to));
+}
 
 function renderPnL() {
   const range = getPnLRange();
   const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const expenses = activeExpenses().filter(e => { const d = tsToDate(e.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
 
-  const revenue = round2(sumBy(sales, saleTotal));
+  const revenue = revenueForRange(range.from, range.to);
+  const salesRev = round2(sumBy(sales, saleTotal));
+  const projRev = projRevForRange(range.from, range.to);
   const totalExpenses = round2(sumBy(expenses, e => Number(e.amount) || 0));
   const cogs = cogsForRange(range.from, range.to);
   const invPurchases = invPurchasesForRange(range.from, range.to);
@@ -101,7 +128,7 @@ function renderPnL() {
   const expByCat = {};
   expenses.forEach(e => { if (e.inventoryTransactionId) return; const c = e.category || 'Other'; expByCat[c] = round2((expByCat[c] || 0) + (Number(e.amount) || 0)); });
 
-  const noData = !sales.length && !expenses.length && !State.invTx.some(t => { const d = tsToDate(t.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
+  const noData = !sales.length && !expenses.length && !State.projRev.some(r => { const d = tsToDate(r.date || r.createdAt); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); }) && !State.invTx.some(t => { const d = tsToDate(t.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
 
   const periodLabel = {
     daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly', custom: 'Custom Range'
@@ -110,14 +137,15 @@ function renderPnL() {
   const html = `
     ${noData ? `<div class="card">${emptyState('📈', 'No sales, expenses, or inventory movements in this period', 'Records will appear here once you add them')}</div>` : ''}
     <div class="grid grid-4 mb-12">
-      <div class="stat-card green"><div class="lbl">Revenue</div><div class="val">${fmtMoneyShort(revenue)}</div><div class="note">${sales.length} sales</div></div>
+      <div class="stat-card green"><div class="lbl">Revenue</div><div class="val">${fmtMoneyShort(revenue)}</div><div class="note">${sales.length} sales ${projRev > 0 ? '· ' + countProjRev(range.from, range.to) + ' project payments' : ''}</div></div>
       <div class="stat-card blue"><div class="lbl">COGS (Materials Used)</div><div class="val">${fmtMoneyShort(cogs)}</div><div class="note">Inventory consumed</div></div>
       <div class="stat-card ${grossProfit >= 0 ? 'yellow' : 'pink'}"><div class="lbl">Gross Profit</div><div class="val">${fmtMoneyShort(grossProfit)}</div><div class="note">Margin ${grossMargin.toFixed(1)}%</div></div>
       <div class="stat-card ${netProfit >= 0 ? 'yellow' : 'pink'}"><div class="lbl">Net Profit / Loss</div><div class="val">${fmtMoneyShort(netProfit)}</div><div class="note">Net margin ${netMargin.toFixed(1)}%</div></div>
     </div>
     <div class="grid grid-2">
       <div class="card"><h3>🧾 Revenue</h3>
-        <div class="set-row"><span class="sr-lbl">Sales / Income (completed &amp; recorded)</span><b>${fmtMoney(revenue)}</b></div>
+        <div class="set-row"><span class="sr-lbl">Sales / Income (completed &amp; recorded)</span><b>${fmtMoney(salesRev)}</b></div>
+        ${projRev > 0 ? `<div class="set-row"><span class="sr-lbl">Project revenue (payments received)</span><b>${fmtMoney(projRev)}</b></div>` : ''}
         <div class="set-row"><span class="sr-lbl">Total Revenue</span><b class="pos">${fmtMoney(revenue)}</b></div>
       </div>
       <div class="card"><h3>🧮 Profit Structure</h3>
@@ -150,7 +178,7 @@ function exportPnLCSV() {
   const range = getPnLRange();
   const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const expenses = activeExpenses().filter(e => { const d = tsToDate(e.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
-  const revenue = round2(sumBy(sales, saleTotal));
+  const revenue = revenueForRange(range.from, range.to);
   const totalExpenses = round2(sumBy(expenses, e => Number(e.amount) || 0));
   const cogs = cogsForRange(range.from, range.to);
   const invPurchases = invPurchasesForRange(range.from, range.to);
@@ -164,7 +192,7 @@ function exportPnLCSV() {
     ['Period', `${fmtDate(range.from)} — ${fmtDate(range.to)}`],
     ['Generated', fmtDateTime(new Date())],
     [''],
-    ['Revenue (Sales)', revenue],
+    ['Revenue (Sales + Project Revenue)', revenue],
     ['COGS (Materials Consumed)', cogs],
     ['Gross Profit', grossProfit],
     ['Gross Margin %', grossMargin.toFixed(2)],
@@ -188,7 +216,7 @@ function exportPnLPDF() {
   const range = getPnLRange();
   const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const expenses = activeExpenses().filter(e => { const d = tsToDate(e.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
-  const revenue = round2(sumBy(sales, saleTotal));
+  const revenue = revenueForRange(range.from, range.to);
   const cogs = cogsForRange(range.from, range.to);
   const invPurchases = invPurchasesForRange(range.from, range.to);
   const opEx = round2(round2(sumBy(expenses, e => Number(e.amount) || 0)) - invPurchases);
@@ -245,13 +273,14 @@ function renderReports() {
   const range = getRepRange();
   const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const expenses = activeExpenses().filter(e => { const d = tsToDate(e.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
-  const revenue = sumBy(sales, saleTotal);
+  const revenue = revenueForRange(range.from, range.to);
   const totalExp = sumBy(expenses, e => e.amount);
   const net = revenue - totalExp;
 
   // Daily breakdown
   const dayMap = {};
   sales.forEach(s => { const d = tsToDate(s.date); if (d) { const k = dateInputVal(d); dayMap[k] = dayMap[k] || { income: 0, expense: 0, txns: 0 }; dayMap[k].income += saleTotal(s); dayMap[k].txns++; } });
+  State.projRev.forEach(r => { const d = tsToDate(r.date || r.createdAt); if (!r.archived && d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime()) { const k = dateInputVal(d); dayMap[k] = dayMap[k] || { income: 0, expense: 0, txns: 0 }; dayMap[k].income += Number(r.amount) || 0; dayMap[k].txns++; } });
   expenses.forEach(e => { const d = tsToDate(e.date); if (d) { const k = dateInputVal(d); dayMap[k] = dayMap[k] || { income: 0, expense: 0, txns: 0 }; dayMap[k].expense += Number(e.amount) || 0; dayMap[k].txns++; } });
   const days = Object.keys(dayMap).sort().reverse();
 
@@ -348,7 +377,7 @@ function exportDailyPDF() {
   const range = getRepRange();
   const sales = activeSales().filter(s => { const d = tsToDate(s.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
   const expenses = activeExpenses().filter(e => { const d = tsToDate(e.date); return d && d.getTime() >= range.from.getTime() && d.getTime() <= range.to.getTime(); });
-  const revenue = sumBy(sales, saleTotal);
+  const revenue = revenueForRange(range.from, range.to);
   const totalExp = sumBy(expenses, e => e.amount);
   let y = 20;
   doc.setFontSize(16); doc.setFont('helvetica', 'bold');
