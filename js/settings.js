@@ -313,21 +313,25 @@ function retentionCutoff() {
 }
 function retentionEligibleCount() {
   const ret = getRetentionConfig();
-  if (ret.mode === 'disabled' || !ret.enabled) return { sales: 0, expenses: 0, payments: 0, invTx: 0, projRev: 0, projExp: 0, projects: 0, total: 0, oldest: null };
+  // NOTE: inventory_transactions are EXCLUDED on purpose — the Firestore rules
+  // make movements immutable (append-only), so neither archive nor delete can
+  // modify them from the client. They stay as permanent accounting history.
+  // (The scheduled Cloud Function uses the Admin SDK which bypasses rules and
+  // CAN purge them if the retention mode is 'delete'.)
+  if (ret.mode === 'disabled' || !ret.enabled) return { sales: 0, expenses: 0, payments: 0, projRev: 0, projExp: 0, projects: 0, total: 0, oldest: null };
   const cutoff = retentionCutoff();
   const older = (d) => { const x = tsToDate(d); return x && x.getTime() < cutoff.getTime(); };
   const sales = activeSales().filter(s => older(s.date));
   const expenses = activeExpenses().filter(e => older(e.date));
   const payments = State.payments.filter(p => !p.archived && older(p.date));
-  const invTx = State.invTx.filter(t => !t.archived && older(t.date || t.createdAt));
   const projRev = State.projRev.filter(r => !r.archived && older(r.date || r.createdAt));
   const projExp = State.projExp.filter(e => !e.archived && older(e.date || e.createdAt));
   // Historical project records: completed/delivered projects older than retention
   const projects = activeProjects().filter(p => ['Completed', 'Delivered'].includes(p.status) && older(p.endDate || p.targetDate || p.createdAt));
-  const allDates = [...sales, ...expenses, ...payments, ...invTx, ...projRev, ...projExp].map(x => tsToDate(x.date || x.createdAt)).filter(Boolean);
+  const allDates = [...sales, ...expenses, ...payments, ...projRev, ...projExp].map(x => tsToDate(x.date || x.createdAt)).filter(Boolean);
   const oldest = allDates.length ? new Date(Math.min(...allDates.map(d => d.getTime()))) : null;
-  const total = sales.length + expenses.length + payments.length + invTx.length + projRev.length + projExp.length + projects.length;
-  return { sales: sales.length, expenses: expenses.length, payments: payments.length, invTx: invTx.length, projRev: projRev.length, projExp: projExp.length, projects: projects.length, total, oldest };
+  const total = sales.length + expenses.length + payments.length + projRev.length + projExp.length + projects.length;
+  return { sales: sales.length, expenses: expenses.length, payments: payments.length, projRev: projRev.length, projExp: projExp.length, projects: projects.length, total, oldest };
 }
 function retentionOldestDate() {
   return retentionEligibleCount().oldest;
@@ -356,11 +360,10 @@ async function runRetentionCheck() {
   const eligibleSales = activeSales().filter(s => older(s.date));
   const eligibleExpenses = activeExpenses().filter(e => older(e.date));
   const eligiblePayments = State.payments.filter(p => !p.archived && older(p.date));
-  const eligibleInvTx = State.invTx.filter(t => !t.archived && older(t.date || t.createdAt));
   const eligibleProjRev = State.projRev.filter(r => !r.archived && older(r.date || r.createdAt));
   const eligibleProjExp = State.projExp.filter(e => !e.archived && older(e.date || e.createdAt));
   const eligibleProjects = activeProjects().filter(p => ['Completed', 'Delivered'].includes(p.status) && older(p.endDate || p.targetDate || p.createdAt));
-  const totalEligible = eligibleSales.length + eligibleExpenses.length + eligiblePayments.length + eligibleInvTx.length + eligibleProjRev.length + eligibleProjExp.length + eligibleProjects.length;
+  const totalEligible = eligibleSales.length + eligibleExpenses.length + eligiblePayments.length + eligibleProjRev.length + eligibleProjExp.length + eligibleProjects.length;
   try {
     if (totalEligible > 0) {
       // Retention warning notice (spec: notify admin before cleanup)
@@ -381,7 +384,6 @@ async function runRetentionCheck() {
       await process(COLL.sales, eligibleSales);
       await process(COLL.expenses, eligibleExpenses);
       await process(COLL.payments, eligiblePayments);
-      await process(COLL.invTx, eligibleInvTx);
       await process(COLL.projRev, eligibleProjRev);
       await process(COLL.projExp, eligibleProjExp);
       await process(COLL.projects, eligibleProjects);
@@ -406,7 +408,6 @@ async function runRetentionCheck() {
       await del(COLL.sales, eligibleSales);
       await del(COLL.expenses, eligibleExpenses);
       await del(COLL.payments, eligiblePayments);
-      await del(COLL.invTx, eligibleInvTx);
       await del(COLL.projRev, eligibleProjRev);
       await del(COLL.projExp, eligibleProjExp);
       await del(COLL.projects, eligibleProjects);
