@@ -87,13 +87,13 @@ function renderDashboard() {
   // ==== Charts ====
   const chartsHtml = `
     <div class="grid grid-2">
-      <div class="card"><h3>📈 ${escapeHtml(periodName)} Income vs Expenses</h3><div class="chart-box" id="chartDaily"></div></div>
-      <div class="card"><h3>🗓 Monthly Income vs Expenses</h3><div class="chart-box" id="chartMonthly"></div></div>
-      <div class="card"><h3>📉 Profit / Loss Trend</h3><div class="chart-box" id="chartTrend"></div></div>
-      <div class="card"><h3>🏷 Revenue by Category</h3><div class="chart-box" id="chartRevCat"></div></div>
-      <div class="card"><h3>🧾 Expenses by Category</h3><div class="chart-box" id="chartExpCat"></div></div>
-      <div class="card"><h3>📦 Inventory Value by Category</h3><div class="chart-box" id="chartInvVal"></div></div>
-      <div class="card" style="grid-column:1/-1"><h3>📐 Project Profitability</h3><div class="chart-box" id="chartProj"></div></div>
+      <div class="card"><h3>📈 ${escapeHtml(periodName)} Income vs Expenses</h3><div class="chart-box"><canvas id="chartDaily"></canvas></div></div>
+      <div class="card"><h3>🗓 Monthly Income vs Expenses</h3><div class="chart-box"><canvas id="chartMonthly"></canvas></div></div>
+      <div class="card"><h3>📉 Profit / Loss Trend</h3><div class="chart-box"><canvas id="chartTrend"></canvas></div></div>
+      <div class="card"><h3>🏷 Revenue by Category</h3><div class="chart-box"><canvas id="chartRevCat"></canvas></div></div>
+      <div class="card"><h3>🧾 Expenses by Category</h3><div class="chart-box"><canvas id="chartExpCat"></canvas></div></div>
+      <div class="card"><h3>📦 Inventory Value by Category</h3><div class="chart-box"><canvas id="chartInvVal"></canvas></div></div>
+      <div class="card" style="grid-column:1/-1"><h3>📐 Project Profitability</h3><div class="chart-box"><canvas id="chartProj"></canvas></div></div>
     </div>`;
 
   const quickActions = `
