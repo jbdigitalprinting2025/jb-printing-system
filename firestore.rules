@@ -38,15 +38,16 @@ service cloud.firestore {
       return v is number;
     }
 
-    // ---- users: read own doc or admin; create own doc as VIEWER only (role
-    // escalation blocked); self-update allowed only if role UNCHANGED; only
+    // ---- users: read own doc or admin; create by admin OR own doc as VIEWER only
+    // (role escalation blocked); self-update allowed only if role UNCHANGED; only
     // admin can change roles or delete users ----
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow create: if signedIn()
-        && request.auth.uid == uid
-        && (request.resource.data.role == 'viewer' || isOwnerEmail())
-        && validRole(request.resource.data.role);
+      allow create: if isAdmin()
+        || (signedIn()
+            && request.auth.uid == uid
+            && (request.resource.data.role == 'viewer' || isOwnerEmail())
+            && validRole(request.resource.data.role));
       allow update: if isAdmin()
         || (request.auth.uid == uid
             && (request.resource.data.role == resource.data.role || isOwnerEmail())
