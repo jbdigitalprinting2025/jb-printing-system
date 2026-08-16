@@ -263,7 +263,7 @@ function sumBy(items, fn) {
 }
 function saleTotal(s) {
   if (s.total !== undefined && s.total !== null) return round2(Number(s.total)) || 0;
-  return round2((s.items || []).reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0));
+  return round2((Array.isArray(s.items) ? s.items : []).reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0));
 }
 function salePaid(s) {
   const total = saleTotal(s);
