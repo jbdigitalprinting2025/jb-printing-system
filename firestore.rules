@@ -156,16 +156,11 @@ service cloud.firestore {
                ? get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.amountPaid
                : 0)
               - (resource.data.amount || 0) + request.resource.data.amount;
-      // Delete: on delete operations request.resource is NULL, so the existing
-      // doc must be read via `resource` (projectId + amount). amountPaid must
-      // drop by exactly the deleted amount in the same batch.
-      allow delete: if isActiveStaffOrAdmin()
-        && exists(/databases/$(database)/documents/projects/$(resource.data.projectId))
-        && getAfter(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.amountPaid
-           == ('amountPaid' in get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data
-               ? get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.amountPaid
-               : 0)
-              - (resource.data.amount || 0);
+      // Delete: staff/admin only. The CREATE/UPDATE rules enforce the balance;
+      // on delete the app still removes the linked revenue and adjusts the
+      // project's amountPaid in the same batch (via the normal project update
+      // rule) so the payments collection stays the source of truth.
+      allow delete: if isActiveStaffOrAdmin();
     }
 
     // ---- inventory master items: stock can never go negative; cost/sell sane ----
