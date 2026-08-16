@@ -11,6 +11,13 @@ function initFirebase() {
   auth = firebase.auth();
   db = firebase.firestore();
   db.settings({ ignoreUndefinedProperties: true });
+  // Offline persistence: app keeps working with no internet; syncs on reconnect.
+  // Fails silently if another tab already owns the cache (still works in-memory).
+  try {
+    db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+      if (err && err.code !== 'failed-precondition') console.warn('persistence disabled', err);
+    });
+  } catch (e) { console.warn('persistence unavailable', e); }
 
   auth.onAuthStateChanged(async (user) => {
     if (user) {
@@ -24,6 +31,15 @@ function initFirebase() {
     }
   });
 }
+
+// ---- Double-submission guard (prevents duplicate transactions) ----
+let _busy = false;
+function busyStart() {
+  if (_busy) { showToast('Please wait — still saving...', 'info'); return false; }
+  _busy = true;
+  return true;
+}
+function busyEnd() { _busy = false; }
 
 async function loadUserDoc() {
   try {
@@ -79,6 +95,30 @@ function guardAdmin() {
 // ---- Generic Firestore helpers ----
 function nowTS() { return firebase.firestore.FieldValue.serverTimestamp(); }
 function newId() { return db.collection('_ids').doc().id; }
+
+// Guaranteed-unique business transaction IDs.
+// Base = Firestore auto doc id (globally unique, generated client-side without a write).
+// Display ID = prefix + date + short slice of the unique doc id (human-readable, still unique).
+function genBizId(prefix, date) {
+  const uid = newId(); // unique Firestore id (never collides)
+  const d = date || new Date();
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  return `${prefix}-${ymd}-${uid.slice(0, 6).toUpperCase()}`;
+}
+// Ensure a display id is unique against an existing list (belt & suspenders)
+function uniqueBizId(prefix, date, existingIds) {
+  let id = genBizId(prefix, date);
+  let tries = 0;
+  while (existingIds && existingIds.includes(id) && tries < 5) { id = genBizId(prefix, date); tries++; }
+  return id;
+}
+
+// Firestore doc ref that will hold a new record — returns {ref, id} using a
+// client-generated unique id (no write needed to reserve it).
+function newDocRef(collection) {
+  const ref = db.collection(collection).doc();
+  return { ref, id: ref.id };
+}
 
 async function fsGet(collection, id) {
   const snap = await db.collection(collection).doc(id).get();
