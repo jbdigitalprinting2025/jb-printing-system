@@ -249,26 +249,6 @@ function rerenderCurrent() {
 function sumBy(items, fn) {
   return items.reduce((s, it) => s + (Number(fn(it)) || 0), 0);
 }
-function salesInRange(from, to) {
-  const f = from ? from.getTime() : -Infinity;
-  const t = to ? to.getTime() : Infinity;
-  return State.sales.filter(s => {
-    const d = tsToDate(s.date);
-    if (!d) return false;
-    const tms = d.getTime();
-    return tms >= f && tms <= t;
-  });
-}
-function expensesInRange(from, to) {
-  const f = from ? from.getTime() : -Infinity;
-  const t = to ? to.getTime() : Infinity;
-  return State.expenses.filter(e => {
-    const d = tsToDate(e.date);
-    if (!d) return false;
-    const tms = d.getTime();
-    return tms >= f && tms <= t;
-  });
-}
 function saleTotal(s) {
   if (s.total !== undefined && s.total !== null) return round2(Number(s.total)) || 0;
   return round2((s.items || []).reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0));
